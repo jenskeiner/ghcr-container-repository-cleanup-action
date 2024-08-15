@@ -1,9 +1,9 @@
 # ghcr.io Container Repository Cleanup Action
 
-[![GitHub Super-Linter](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/linter.yml/badge.svg?branch=develop)](https://github.com/super-linter/super-linter)
-![CI](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/ci.yml/badge.svg?branch=develop)
-[![Check dist/](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml/badge.svg?branch=develop)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml)
-[![CodeQL](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml/badge.svg?branch=develop)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml)
+[![GitHub Super-Linter](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/linter.yml/badge.svg?branch=main)](https://github.com/super-linter/super-linter)
+![CI](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/ci.yml/badge.svg?branch=main)
+[![Check dist/](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml/badge.svg?branch=main)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml)
+[![CodeQL](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml)
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
 A workflow action that deletes tags and versions (container images) from a
