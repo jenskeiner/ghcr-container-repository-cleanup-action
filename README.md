@@ -19,8 +19,8 @@
 
 ## Overview
 
-A workflow action that deletes obsolete tags and versions from a GitHub
-Container Registry (ghcr.io) package repository.
+A workflow action that deletes tags and versions (container images) from a
+GitHub Container Registry (ghcr.io) package repository.
 
 This action is originally based on
 [Ghcr Cleanup Action](https://github.com/dataaxiom/ghcr-cleanup-action), but has
@@ -28,15 +28,28 @@ different semantics.
 
 Includes the following features:
 
-- Automatic GitHub user/organization repository support.
-- Deleting images by tags that match a regular expression.
-- Keeping images by tags that match a regular expression.
-- Keeping a number of most recent remaining tags.
-- Keeping a number of most recent remaining untagged images.
-- Multi-architecture and attestation support.
-- Deletion by tag also deletes all reachable child images.
-- Reachable child images are only deleted if not reachable through any excluded
-  tag.
+- Supports GitHub user/organization repositories.
+- Delete images by tag matching a regular expression.
+- Keep images by tag matching a regular expression.
+- Keep a number of most recent remaining tags
+- Keep a number of most recent untagged images, respectively.
+- Multi-architecture image support.
+
+## Glossary and Terms
+
+GitHub Packages is a software package hosting service and supports different
+package types, like npm packages. This action only targets packages of type
+`container`, meaning Docker/container images.
+
+The contents of a _package_ are stored in a _package repository_. Each package
+repository holds different _versions_ of the corresponding package. For
+container images, a version is a single _container image_. Each image may be
+associated with one or more tags. Also, an image can either be a
+single-architecture image, a multi-architecture image, or an attestation image.
+Multi-architecture images consist of references to single-architecture and/or
+attestation images, thereby creating cross-links between different versions in
+the package repository. We will use the terms (_container_) _image_ and
+(_package_) _version_ interchangably.
 
 ## Setup
 
@@ -71,71 +84,104 @@ from the package repository. Ensure permissions are set up correctly:
 | exclude-tags    |    no    |                 | Regular expression matching tags to keep                    |
 | keep-n-tagged   |    no    |                 | Number of remaining tags to keep, sorted by date            |
 | keep-n-untagged |    no    |                 | Number of remaining untagged images to keep, sorted by date |
-| dry-run         |    no    | false           | Wheter to simulate cleanup action without actual deletion   |
+| dry-run         |    no    | false           | Whether to simulate action without actual deletion          |
 
-## Determining the tags and versions to delete
+## How package versions to delete are determined
 
-The action collects tags and package versions to delete or to keep in separate
-sets, according to the specified options. If an option is not given, the
-relevant logic behind it is not executed and thus does not affect any of these
-sets.
+The package versions to delete are determined through the combination of the
+options `include-tags`, `exclude-tags`, `keep-n-tagged`, and `keep-n-untagged`,
+all of which are optional. Nothing is deleted if all options are absent.
 
-Finally, all collected tags and images to delete are removed from the package
-repository, unless they are included in the sets of tags or images that should
-be kept.
+During processing of the options, the action keeps track of the following sets:
 
-Rationale: The same image may be referenced by different tagged
-(multi-architecture) images. If one parent image should be deleted while the
-other should be kept, according to the `include-tags` and `exclude-tags` regular
-expressions, then the child image should be kept to maintain the integrity of
-the tagged image that is kept.
+- tags to delete
+- tags to keep
+- versions to delete
+- versions to keep
 
-### Included tags
+### `include-tags`
 
-If the option `include-tags` is set, it is used as a regular expression to
-determine tags that should be deleted. Additionally, all images that are
-reachable from a matching tag (including the image that holds the tag itself)
-are added to the set of images to delete.
+This option specifies a regular expression to match tags in the package
+repository. Matching tags are added to the set of tags to delete. For each
+matching tag, the corresponding version is added to the set of versions to
+delete. If a selected version is a multi-architecture image, all child versions
+(single-architecture images, attestations) reachable from there are also added
+to the set of versions to delete.
 
-### Excluded tags
+### `exclude-tags`
 
-If the option `exclude-tags` is set, then similarly to the `tags` option, the
-regular expression determines the tags that should be kept. Also, all reachable
-images are added to the set of images to keep.
+This option works like `include-tags`, but collects matching tags, and the
+corresponding versions and their children in the set of tags to keep and the set
+of versions to keep, respectively.
 
-Note that the set of tags (images) to delete and keep may overlap.
+Any tag and version selected by `include-tags` and `exclude-tags` at the same
+time is kept, so `exclude-tags` trumps `include-tags`. For example, if
+`include-tags` is set to `^1.[0-3]$` and `exclude-tags` is set to `^1.1$`, then
+versions `1.0`, `1.2`, `1.3` would be deleted, but not version `1.1`.
 
-### Keeping the most recent remaining tags
+Also, in the unlikely case that `1.0` and `1.1` are multi-architecture images
+that share one or more child images, these children would also not be deleted to
+keep the integrity of version `1.1`. More on that below.
 
-If the option `keep-n-tagged` is set, then all tags not already affected by the
-`include-tags` or `exclude-tags` option are ordered by date and the most recent
-`keep-n-tagged` tags are added to the set of tags to keep. Likewise, all
-reachabe images are added to the set of images to keep.
+### `keep-n-tagged`
 
-All remaining tags, but not their reachable images, are added to the set of tags
-to delete.
+This option selects the given number of tags after `include-tags` and
+`exclude-tags` options have been processed. All tags matched by neither
+`include-tags` nor `exclude-tags` are ordered by date and the most recent tags,
+the corresponding versions and their children are added to the set of
+tags/versions to keep, respectively. The remaining tags and their related
+versions are added to the set of tags/versions to delete, respectively. If the
+option is not set, the number of tags to keep is implicitly set to the number of
+all remaining tags.
 
-### Keeping the most recent untagged images
+Continuing the example from above, if the repository contains the tags `1.0`,
+`1.1`, ..., `1.9`, then the tags not matched by either `include-tags` or
+`exclude-tags` are `1.4`, `1.5`, ..., `1.9`. If `keep-n-tagged` is set to `2`,
+then the tags `1.8` and `1.9` would be kept, while `1.4`, `1.5`, `1.6` and `1.7`
+would be deleted. This assumes that the versions were created in ascending
+order.
 
-If the option `keep-n-untagged` is set, then all images not yet excluded from
-deletion by the options `include-tags`, `exclude-tags`, or `keep-n-tagged` are
-ordered by date and the most recent `keep-n-untagged` images are added to the
-set of images to keep. The remaining images are added to the set of images to
-delete.
+Again, to keep the integrity of multi-architecture images, any child images that
+are referenced both by a version that should be kept and one that should be
+deleted, are kept.
+
+### `keep-n-untagged`
+
+This option selects untagged versions after `include-tags`, `exclude-tags`, and
+`keep-n-tagged` options have been processed. All remaining versions neither
+included in the versions to delete, nor included in the versions to keep so far
+are ordered by date. The given number of most recent versions are added to the
+set of version to keep. The rest is added to the versions to delete. If the
+option is not set, the number of versions to keep is implicitly set to the
+number of all remaining versions.
+
+Note that using this option may break untagged multi-architecture images as all
+untagged images processed by this option are treated the same.
 
 ### Deletion
 
-When all tags and images to delete or keep have been determined, the action
-carries out the actual deletion process. Each tag that is in the set of tags to
-delete but not in the set of tags to keep is deleted, independently of the image
-it is attached to. Then, each image to delete that is not in the set of images
-to keep is deleted as well.
+After all options from above have been processed, the final set of tags/versions
+are determined by removing all tags/versions to keep from the tags/versions to
+delete. This ensures the integrity of all tags and tagged multi-architecture
+images.
+
+For example, assume a version V carries two tags, A and B, and that tag A should
+be deleted while tag B should be kept. The final set of tags to delete is {A} \
+{B} = {A}, but the final set of versions to delete in {V} \ {V} = {}, the empty
+set. Therefore, only the tag A is removed. Version V cannot be removed because
+tag B should be kept and needs to remain attached to V.
+
+### Dry run
+
+You can use the `dry-run` option to prevent the action from actually deleting
+any tags and versions. This can be helpful to test the configuration of the
+action.
 
 ## Examples
 
 ### Delete specific tagged images
 
-Set the `include-tags` option to delete specific tags.
+Set the `include-tags` option to delete specific tags and their images.
 
 ```yaml
 jobs:
@@ -148,8 +194,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-This will delete `mytag` and `mytag2` as well as all reachable images, except
-those also reachable through another tag.
+This will delete `mytag` and `mytag2`, as well as the corresponding images and
+child images, unless they need to be kept to ensure integrity of other tags and
+images.
 
 This mode is useful, e.g. when tags related to a pull request should be deleted
 when the pull request is closed.
@@ -171,11 +218,10 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### Keep specific tagged images
+### Keep specific tagged images and delete everything else
 
-To cleanup all untagged images in a image repository only the token is required
-to be set. It will use the current repository information to setup the owner and
-package name.
+To delete everything except specific tags and their images, use the
+`exclude-tags` option and set `keep-n-tagged` and `keep-n-untagged` to zero.
 
 ```yaml
 jobs:
@@ -190,8 +236,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-This will delete all tags and images except `mytag1`and `mytag2` and all
-reachable images.
+This will delete all tags and images except `mytag1`and `mytag2` and their
+related images.
 
 This mode is useful for a periodicly triggered workflow that cleans up obsolete
 images from a package repository.
@@ -236,9 +282,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-In addition to `mytag1`and `mytag2` and their reachable images, this will keep
-the three most recent tags and their reachable images, as well as the three most
-recent images not already covered by the previous exclusions.
+In addition to `mytag1`and `mytag2` and their images, this will keep the three
+most recent tags and their images, as well as the three most recent untagged
+images not already covered by the previous options.
 
 ### Override default owner/repository/package
 
@@ -251,7 +297,7 @@ jobs:
   - name: ghcr.io container repository cleanup action
     runs-on: ubuntu-latest
     steps:
-      - uses: dataaxiom/ghcr-cleanup-action@v1
+      - uses: jenskeiner/ghcr-container-repository-cleanup-action@v1
         with:
           owner: myowner
           repository: myrepo
@@ -264,9 +310,9 @@ jobs:
 
 ### Do a dry-run
 
-Test the cleanup action first by setting the `dry-run: true` option on the
-action and then reviewing the workflow log. This mode will simulate the cleanup
-action but will not delete any tags or images.
+Test the cleanup action first by setting the `dry-run` option to `true` and then
+reviewing the workflow log. This mode will simulate the cleanup action but will
+not delete any tags or images.
 
 ### Package Restoration
 
