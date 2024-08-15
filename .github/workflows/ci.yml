@@ -1,13 +1,13 @@
 name: Integration Tests
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize]
     branches:
-      - develop
+      - main
   push:
     branches:
-      - develop
+      - main
   schedule:
     - cron: '31 7 * * 3'
 
