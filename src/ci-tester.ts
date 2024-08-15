@@ -7,7 +7,6 @@ import fs from 'fs'
 import * as core from '@actions/core'
 import { Config } from './config.js'
 import { GithubPackageRepo } from './github-package.js'
-import { Registry } from './registry.js'
 import { SpawnSyncOptionsWithStringEncoding, spawnSync } from 'child_process'
 
 function assertString(input: unknown): asserts input is string {
@@ -163,13 +162,13 @@ async function deleteImages(
     // Skip empty lines.
     if (line0.length <= 0) continue
 
-    const version = repo.getVersionForDigest(line0)
+    const version = repo.getVersion(line0)
 
     if (version) {
       core.info(
         `Deleting package version: id = ${version.id}, digest = ${line0}`
       )
-      await repo.deletePackageVersion(version.id)
+      await repo.deleteVersion(version.id)
     } else {
       throw Error(
         `Unable to delete image with digest = ${line0} as it was not found in the repository.`
@@ -244,9 +243,6 @@ export async function run(): Promise<void> {
 
   config.owner = config.owner?.toLowerCase()
 
-  const registry = new Registry(config)
-  await registry.login()
-
   const githubPackageRepo = new GithubPackageRepo(config)
   await githubPackageRepo.init()
 
@@ -277,9 +273,12 @@ export async function run(): Promise<void> {
     await githubPackageRepo.loadVersions()
 
     // Remove all existing images, except for the dummy image.
-    for (const version of githubPackageRepo.getVersions()) {
-      if (version.name !== dummyDigest) {
-        await githubPackageRepo.deletePackageVersion(version.id)
+    for (const digest of githubPackageRepo.getDigests()) {
+      const version = githubPackageRepo.getVersion(digest)
+      if (version) {
+        if (version.name !== dummyDigest) {
+          await githubPackageRepo.deleteVersion(version.id)
+        }
       }
     }
 
@@ -315,8 +314,9 @@ export async function run(): Promise<void> {
       // Reload all versions.
       await githubPackageRepo.loadVersions()
 
-      for (const version of githubPackageRepo.getVersions()) {
-        core.info(`id = ${version.id}, digest = ${version.name}`)
+      for (const digest of githubPackageRepo.getDigests()) {
+        const version = githubPackageRepo.getVersion(digest)
+        if (version) core.info(`id = ${version.id}, digest = ${version.name}`)
       }
 
       // Delete the images from the prime delete file.
@@ -356,8 +356,8 @@ export async function run(): Promise<void> {
       }
 
       const digests = new Set<string>()
-      for (const version of githubPackageRepo.getVersions()) {
-        digests.add(version.name)
+      for (const digest of githubPackageRepo.getDigests()) {
+        digests.add(digest)
       }
 
       for (const digest of digests_expected) {

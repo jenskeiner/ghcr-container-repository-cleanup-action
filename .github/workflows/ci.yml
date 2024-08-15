@@ -1,10 +1,16 @@
 name: Integration Tests
 
 on:
-  workflow_dispatch: {}
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches:
+      - main
   push:
-  pull_request_target:
-    types: [assigned, opened, synchronize, reopened]
+    branches:
+      - main
+  schedule:
+    - cron: '31 7 * * 3'
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -14,7 +20,7 @@ permissions:
 
 concurrency:
   group: ci-tests
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   general-tests:
@@ -109,12 +115,18 @@ jobs:
             purpose:
               'Check that the latest n untagged images are kept. (multi arch)'
             folder: '09_keep_n_untagged_multi_arch'
-            keep-n-untagged: 3
+            keep-n-untagged: 10
+          - title: 'Keep n latest untagged and interleaved images (multi arch)'
+            purpose:
+              'Check that the latest n untagged images are kept when multi-arch
+              images are uploaded interleaved. (multi arch)'
+            folder: '10_keep_n_untagged_multi_arch_interleaved'
+            keep-n-untagged: 10
           - title: 'All options (single arch)'
             purpose:
               'Check that the combination of all options works correctly.
               (single arch)'
-            folder: '10_all_options_single_arch'
+            folder: '11_all_options_single_arch'
             include-tags: '^1.35-uclibc$'
             exclude-tags: '^1.31-uclibc$'
             keep-n-tagged: 2
@@ -123,7 +135,7 @@ jobs:
             purpose:
               'Check that the combination of all options works correctly.
               (multi-arch)'
-            folder: '11_all_options_multi_arch'
+            folder: '12_all_options_multi_arch'
             include-tags: '^1.35-uclibc$'
             exclude-tags: '^1.31-uclibc$'
             keep-n-tagged: 2
@@ -132,7 +144,7 @@ jobs:
             purpose:
               'Check that using the dry-run option does not actually delete
               anything. (multi-arch)'
-            folder: '12_dry_run_multi_arch'
+            folder: '13_dry_run_multi_arch'
             include-tags: '^1.35-uclibc$'
             exclude-tags: '^1.31-uclibc$'
             keep-n-tagged: 2

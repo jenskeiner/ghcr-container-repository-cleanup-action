@@ -1,7 +1,9 @@
 import * as core from '@actions/core'
 import { Config, getConfig } from './config.js'
-import { Registry, ManifestNotFoundException } from './registry.js'
-import { GithubPackageRepo } from './github-package.js'
+import {
+  GithubPackageRepo,
+  ManifestNotFoundException
+} from './github-package.js'
 
 export async function run(): Promise<void> {
   try {
@@ -21,9 +23,6 @@ class CleanupAction {
   // Configuration.
   config: Config
 
-  // Provides access to the container image registry.
-  registry: Registry
-
   // Provides access to the package repository.
   githubPackageRepo: GithubPackageRepo
 
@@ -31,13 +30,10 @@ class CleanupAction {
     // Get action configuration.
     this.config = getConfig()
     // Initialize registry and package repository.
-    this.registry = new Registry(this.config)
     this.githubPackageRepo = new GithubPackageRepo(this.config)
   }
 
   async init(): Promise<void> {
-    // Login to the registry.
-    await this.registry.login()
     // Initialize the package repository.
     await this.githubPackageRepo.init()
   }
@@ -76,11 +72,19 @@ class CleanupAction {
     return result
   }
 
+  isMultiArch(manifest: any): boolean {
+    return (
+      manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
+      manifest.mediaType ===
+        'application/vnd.docker.distribution.manifest.list.v2+json'
+    )
+  }
+
   /**
    * Returns the digests of all versions recursively reachable from the given tags.
    *
    * @param tags - The tags to determine the reachable versions for.
-   * @returns The set of digests of reachable digests.
+   * @returns The set of reachable digests.
    */
   async getReachableDigestsForTags(tags: Iterable<string>): Promise<string[]> {
     // The result.
@@ -90,7 +94,7 @@ class CleanupAction {
     for (const tag of tags) {
       core.startGroup(`Determine reachable versions for tag ${tag}.`)
       // Get the version for the tag.
-      const version = this.githubPackageRepo.getVersionForTag(tag)
+      const version = this.githubPackageRepo.getVersion(tag)
       if (version) {
         // Starting with the version's digest, recursively determine all reachable versions.
         const reachable = await this.getReachableDigestsForDigest(version.name)
@@ -106,6 +110,57 @@ class CleanupAction {
   }
 
   /**
+   * Returns the digests of all versions recursively reachable from the given digests.
+   *
+   * @param digests - The digests to determine the reachable versions for.
+   * @returns The set of reachable digests.
+   */
+  async getReachableDigestsForDigests(
+    digests: Iterable<string>
+  ): Promise<string[]> {
+    // The result.
+    const result = new Set<string>()
+
+    // Loop over all digests.
+    for (const digest of digests) {
+      core.startGroup(`Determine reachable versions for digest ${digest}.`)
+      // Starting with the version's digest, recursively determine all reachable versions.
+      const reachable = await this.getReachableDigestsForDigest(digest)
+      // Add all reachable versions to the result.
+      for (const child of reachable) {
+        result.add(child)
+      }
+      core.endGroup()
+    }
+
+    return Array.from(result)
+  }
+
+  // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
+  async getManifest(digest: string): Promise<any> {
+    try {
+      core.debug(`Getting manifest for digest ${digest}.`)
+      // Get the manifest for the digest. May throw an exception.
+      const manifest = this.githubPackageRepo.getManifest(digest)
+      core.debug(`Manifest for digest ${digest}:`)
+      core.debug(JSON.stringify(manifest, null, 2))
+      return manifest
+    } catch (error) {
+      // Handle exception.
+      if (error instanceof ManifestNotFoundException) {
+        // Manifest not found. Log error and return null.
+        core.error(
+          `Manifest for digest ${digest} not found in repository. Skipping.`
+        )
+        return null
+      } else {
+        // Re-throw other errors.
+        throw error
+      }
+    }
+  }
+
+  /**
    * Retrieves the digests reachable from a given digest.
    *
    * The result includes the given digest as well.
@@ -117,32 +172,8 @@ class CleanupAction {
     // The result.
     const result: string[] = []
 
-    // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
-    const getManifest = async (): Promise<any> => {
-      try {
-        core.debug(`Getting manifest for digest ${digest}.`)
-        // Get the manifest for the digest. May throw an exception.
-        const manifest = await this.registry.getManifestByDigest(digest)
-        core.debug(`Manifest for digest ${digest}:`)
-        core.debug(JSON.stringify(manifest, null, 2))
-        return manifest
-      } catch (error) {
-        // Handle exception.
-        if (error instanceof ManifestNotFoundException) {
-          // Manifest not found. Log error and return null.
-          core.error(
-            `Manifest for digest ${digest} not found in repository. Skipping.`
-          )
-          return null
-        } else {
-          // Re-throw other errors.
-          throw error
-        }
-      }
-    }
-
     // Get the manifest for the given digest.
-    const manifest = await getManifest()
+    const manifest = await this.getManifest(digest)
 
     if (!manifest) {
       // Manifest not found. Return empty set.
@@ -153,11 +184,7 @@ class CleanupAction {
     result.push(digest)
 
     // Check the media type of the manifest.
-    if (
-      manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
-      manifest.mediaType ===
-        'application/vnd.docker.distribution.manifest.list.v2+json'
-    ) {
+    if (this.isMultiArch(manifest)) {
       // Manifest list, i.e. a multi-architecture image pointing to multiple child manifests.
       core.info(`- ${digest}: manifest list`)
 
@@ -198,58 +225,6 @@ class CleanupAction {
     return result
   }
 
-  /**
-   * Deletes a tag from the package registry.
-   *
-   * @param tag - The tag to be deleted.
-   * @throws {Error} If the version for the tag is not found or if the intermediate version used to delete the tag is not found.
-   */
-  async deleteTag(tag: string): Promise<void> {
-    // Get the version for the tag.
-    const version = this.githubPackageRepo.getVersionForTag(tag)
-
-    if (version) {
-      core.debug(JSON.stringify(version, null, 2))
-
-      // Get the manifest for the version digest.
-      const manifest = await this.registry.getManifestByDigest(version.name)
-
-      // Clone the manifest.
-      const manifest0 = JSON.parse(JSON.stringify(manifest))
-
-      // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
-      // Push the manifest with the given tag to the registry. This creates a new version with the
-      // tag and removes it from the original version.
-      if (manifest0.manifests) {
-        // Multi-arch manifest. Remove any pointers to child manifests.
-        manifest0.manifests = []
-        await this.registry.putManifest(tag, manifest0)
-      } else {
-        // Single-architecture or attestation manifest. Remove any pointers to layers.
-        manifest0.layers = []
-        await this.registry.putManifest(tag, manifest0)
-      }
-
-      // Reload the package repository to update the version cache.
-      await this.githubPackageRepo.loadVersions()
-
-      // Get the new version for the tag.
-      const version0 = this.githubPackageRepo.getVersionForTag(tag)
-
-      if (version0) {
-        core.debug(JSON.stringify(version0, null, 2))
-        // Delete the old version.
-        await this.githubPackageRepo.deletePackageVersion(version0.id)
-      } else {
-        throw new Error(
-          `Intermediate version used to delete tag ${tag} not found.`
-        )
-      }
-    } else {
-      throw new Error(`Version for tag ${tag} not found.`)
-    }
-  }
-
   logItems(items: string[]): void {
     if (items.length > 0) {
       for (const item of items) {
@@ -272,14 +247,17 @@ class CleanupAction {
       await this.githubPackageRepo.loadVersions()
 
       // Log total number of version retrieved.
-      const versions = this.githubPackageRepo.getVersions()
-      for (const version of versions) {
-        core.debug(
-          `- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`
-        )
+      const digests = this.githubPackageRepo.getDigests()
+      for (const digest of digests) {
+        const version = this.githubPackageRepo.getVersion(digest)
+        if (version) {
+          core.debug(
+            `- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`
+          )
+        }
       }
 
-      core.info(`Retrieved ${versions.length} versions.`)
+      core.info(`Retrieved ${digests.length} versions.`)
       core.endGroup()
 
       // The logic to determine the tags and versions to delete is as follows:
@@ -356,11 +334,11 @@ class CleanupAction {
         .sort((a: string, b: string) => {
           return (
             Date.parse(
-              this.githubPackageRepo.getVersionForTag(b)?.updated_at ??
+              this.githubPackageRepo.getVersion(b)?.updated_at ??
                 '1970-01-01T00:00:00Z'
             ) -
             Date.parse(
-              this.githubPackageRepo.getVersionForTag(a)?.updated_at ??
+              this.githubPackageRepo.getVersion(a)?.updated_at ??
                 '1970-01-01T00:00:00Z'
             )
           )
@@ -405,32 +383,41 @@ class CleanupAction {
         .filter(digest => !c_digest.includes(digest))
         .filter(digest => !d_digest.includes(digest))
         .sort((a: string, b: string) => {
+          const aVersion = this.githubPackageRepo.getVersion(a)
+          const bVersion = this.githubPackageRepo.getVersion(b)
           return (
-            Date.parse(
-              this.githubPackageRepo.getVersionForDigest(b)?.updated_at ??
-                '1970-01-01T00:00:00Z'
-            ) -
-            Date.parse(
-              this.githubPackageRepo.getVersionForDigest(a)?.updated_at ??
-                '1970-01-01T00:00:00Z'
-            )
+            Date.parse(bVersion?.updated_at ?? '1970-01-01T00:00:00Z') -
+            Date.parse(aVersion?.updated_at ?? '1970-01-01T00:00:00Z')
           )
         })
 
-      core.info('Remaining digest to consider:')
+      core.info('Remaining digests to consider:')
       this.logItems(imagesRest)
 
       // 8. Determine E_digest.
-      e_digest =
+      const e_digest0 =
         this.config.keepNuntagged != null
           ? imagesRest.slice(0, this.config.keepNuntagged)
           : imagesRest
 
-      // 9. Determine F_digest.
-      f_digest =
-        this.config.keepNuntagged != null
-          ? imagesRest.slice(this.config.keepNuntagged)
-          : []
+      // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
+      e_digest = []
+      for (const digest of e_digest0) {
+        const reachable = await this.getReachableDigestsForDigest(digest)
+        for (const child of reachable) {
+          // Avoid duplicates.
+          if (!e_digest.includes(child)) e_digest.push(child)
+        }
+        if (
+          this.config.keepNuntagged != null &&
+          e_digest.length >= this.config.keepNuntagged
+        ) {
+          break
+        }
+      }
+
+      // 9. Determine F_digest as imagesRest with images in E_digest removed.
+      f_digest = imagesRest.filter(digest => !e_digest.includes(digest))
 
       core.info(
         `Most recent ${this.config.keepNuntagged} untagged images to keep:`
@@ -451,7 +438,10 @@ class CleanupAction {
         .concat(d_digest)
         .concat(f_digest)
         .filter(
-          digest => !b_digest.includes(digest) && !c_digest.includes(digest)
+          digest =>
+            !b_digest.includes(digest) &&
+            !c_digest.includes(digest) &&
+            !e_digest.includes(digest)
         )
 
       this.logItems(digestsDelete)
@@ -460,17 +450,17 @@ class CleanupAction {
       // Delete the tags.
       for (const tag of tagsDelete) {
         core.info(`Deleting tag ${tag}.`)
-        await this.deleteTag(tag)
+        await this.githubPackageRepo.deleteTag(tag)
       }
 
       // Delete the versions.
       for (const digest of digestsDelete) {
-        const version = this.githubPackageRepo.getVersionForDigest(digest)
+        const version = this.githubPackageRepo.getVersion(digest)
         if (version) {
           core.info(
             `Deleting version with digest=${version.name}, id=${version.id}.`
           )
-          await this.githubPackageRepo.deletePackageVersion(version.id)
+          await this.githubPackageRepo.deleteVersion(version.id)
         } else {
           core.info(`Version with digest ${digest} not found.`)
         }
