@@ -11,18 +11,12 @@ name: autofix.ci
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, reopened, synchronize]
     branches:
       - develop
   push:
     branches:
-      - main
       - develop
-      - 'feature/**'
-      - 'bugfix/**'
-      - 'release/**'
-      - 'hotfix/**'
-      - 'support/**'
 
 permissions:
   contents: read
