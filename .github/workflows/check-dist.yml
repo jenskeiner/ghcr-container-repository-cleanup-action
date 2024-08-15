@@ -9,7 +9,20 @@
 # expected from the build.
 name: autofix.ci
 
-on: [pull_request, push]
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches:
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'release/**'
+      - 'hotfix/**'
+      - 'support/**'
 
 permissions:
   contents: read
