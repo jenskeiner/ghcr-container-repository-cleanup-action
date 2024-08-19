@@ -33855,7 +33855,7 @@ function wrappy (fn, cb) {
 /***/ ((module, __unused_webpack___webpack_exports__, __nccwpck_require__) => {
 
 __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __webpack_async_result__) => { try {
-/* harmony import */ var _main_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(9653);
+/* harmony import */ var _main_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(1502);
 /**
  * The entrypoint for the action.
  */
@@ -33868,7 +33868,7 @@ __webpack_async_result__();
 
 /***/ }),
 
-/***/ 9653:
+/***/ 1502:
 /***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
 
 
@@ -34386,7 +34386,7 @@ function getConfig() {
     if (core.getInput('dry-run')) {
         config.dryRun = core.getBooleanInput('dry-run');
         if (config.dryRun) {
-            core.info('in dry run mode - no packages will be deleted');
+            core.info('Dry-run mode enabled. No versions will actually be deleted.');
         }
     }
     else {
@@ -39798,7 +39798,7 @@ function isValidChallenge(attributes) {
     return valid;
 }
 
-;// CONCATENATED MODULE: ./src/registry.ts
+;// CONCATENATED MODULE: ./src/github-package.ts
 
 
 
@@ -39809,21 +39809,27 @@ class ManifestNotFoundException extends Error {
     }
 }
 /**
- * Provides access to the GitHub Container Registry via the Docker Registry HTTP API V2.
+ * Provides access to a package via the GitHub Packages REST API.
  */
-class Registry {
-    // Action configuration.
+class GithubPackageRepo {
+    // The action configuration
     config;
+    // The type of repository (User or Organization)
+    repoType = 'Organization';
+    // Map of tags to package versions.
+    tag2version = new Map();
+    // Map of digests to package versions.
+    digest2version = new Map();
     // HTTP client.
     axios;
     // Cache of loaded manifests, by digest.
     manifestCache = new Map();
     /**
-     * @constructor
-     * @param {Config} config - The configuration object.
+     * Constructor.
+     *
+     * @param config The action configuration
      */
     constructor(config) {
-        // Save configuration.
         this.config = config;
         // Create HTTP client.
         this.axios = lib_axios.create({
@@ -39833,7 +39839,7 @@ class Registry {
         esm(this.axios, { retries: 3 });
         // Set up default request headers.
         this.axios.defaults.headers.common.Accept =
-            'application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json';
+            'application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json';
     }
     /**
      * Handles the authentication challenge.
@@ -39889,6 +39895,136 @@ class Registry {
                 else {
                     throw error;
                 }
+            }
+        }
+    }
+    async init() {
+        // Determine the repository type (User or Organization).
+        this.repoType = await this.config.getOwnerType();
+        await this.login();
+    }
+    /**
+     * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
+     */
+    async loadVersions() {
+        // Clear the internal maps.
+        this.tag2version.clear();
+        this.digest2version.clear();
+        // Function to retrieve package versions.
+        let getFunc;
+        // Parameters for the function call.
+        let getParams;
+        if (this.repoType === 'User') {
+            // Use the appropriate function for user repos.
+            getFunc = this.config.isPrivateRepo
+                ? this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
+                : this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByUser;
+            // Parameters for the function call.
+            getParams = {
+                package_type: 'container',
+                package_name: this.config.package,
+                username: this.config.owner,
+                state: 'active',
+                per_page: 100
+            };
+        }
+        else {
+            getFunc =
+                this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByOrg;
+            // Parameters for the function call.
+            getParams = {
+                package_type: 'container',
+                package_name: this.config.package,
+                org: this.config.owner,
+                state: 'active',
+                per_page: 100
+            };
+        }
+        // Iterate over all package versions.
+        for await (const response of this.config.octokit.paginate.iterator(getFunc, getParams)) {
+            for (const packageVersion of response.data) {
+                // Get the manifest for the package version.
+                const manifest = await this.getManifestByDigest(packageVersion.name);
+                packageVersion.manifest = manifest;
+                // Add the digest to the internal map.
+                this.digest2version.set(packageVersion.name, packageVersion);
+                // Add each tag to the internal map.
+                for (const tag of packageVersion.metadata.container.tags) {
+                    this.tag2version.set(tag, packageVersion);
+                }
+            }
+        }
+    }
+    /**
+     * Return the tags for the package.
+     * @returns The tags for the package.
+     */
+    getTags() {
+        return Array.from(this.tag2version.keys());
+    }
+    /**
+     * Return the package version for a tag.
+     * @param tag The tag to search for.
+     * @returns The package version for the tag.
+     */
+    getVersionForTag(tag) {
+        return this.tag2version.get(tag);
+    }
+    /**
+     Return the digests for the package.
+     * @returns The digests for the package.
+     */
+    getDigests() {
+        return Array.from(this.digest2version.keys());
+    }
+    /**
+     * Return the package version for a digest.
+     * @param digest The digest to search for.
+     * @returns The package version for the digest.
+     */
+    getVersionForDigest(digest) {
+        return this.digest2version.get(digest);
+    }
+    /**
+     * Return all versions of the package.
+     * @returns All versions of the package.
+     */
+    getVersions() {
+        return Array.from(this.digest2version.values());
+    }
+    /**
+     * Delete a package version.
+     * @param id The ID of the package version to delete.
+     */
+    async deletePackageVersion(id) {
+        if (!this.config.dryRun) {
+            if (this.repoType === 'User') {
+                if (this.config.isPrivateRepo) {
+                    await this.config.octokit.rest.packages.deletePackageVersionForAuthenticatedUser({
+                        package_type: 'container',
+                        package_name: this.config.package,
+                        package_version_id: id
+                    });
+                }
+                else {
+                    await this.config.octokit.rest.packages.deletePackageVersionForUser({
+                        package_type: 'container',
+                        package_name: this.config.package,
+                        username: this.config.owner,
+                        package_version_id: id
+                    });
+                }
+            }
+            else {
+                await this.config.octokit.rest.packages.deletePackageVersionForOrg({
+                    package_type: 'container',
+                    package_name: this.config.package,
+                    org: this.config.owner,
+                    package_version_id: id
+                });
             }
         }
     }
@@ -39969,157 +40105,7 @@ class Registry {
     }
 }
 
-;// CONCATENATED MODULE: ./src/github-package.ts
-/**
- * Provides access to a package via the GitHub Packages REST API.
- */
-class GithubPackageRepo {
-    // The action configuration
-    config;
-    // The type of repository (User or Organization)
-    repoType = 'Organization';
-    // Map of tags to package versions.
-    tag2version = new Map();
-    // Map of digests to package versions.
-    digest2version = new Map();
-    /**
-     * Constructor.
-     *
-     * @param config The action configuration
-     */
-    constructor(config) {
-        this.config = config;
-    }
-    async init() {
-        // Determine the repository type (User or Organization).
-        this.repoType = await this.config.getOwnerType();
-    }
-    /**
-     * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
-     */
-    async loadVersions() {
-        // Clear the internal maps.
-        this.tag2version.clear();
-        this.digest2version.clear();
-        // Function to retrieve package versions.
-        let getFunc;
-        // Parameters for the function call.
-        let getParams;
-        if (this.repoType === 'User') {
-            // Use the appropriate function for user repos.
-            getFunc = this.config.isPrivateRepo
-                ? this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
-                : this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByUser;
-            // Parameters for the function call.
-            getParams = {
-                package_type: 'container',
-                package_name: this.config.package,
-                username: this.config.owner,
-                state: 'active',
-                per_page: 100
-            };
-        }
-        else {
-            getFunc =
-                this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByOrg;
-            // Parameters for the function call.
-            getParams = {
-                package_type: 'container',
-                package_name: this.config.package,
-                org: this.config.owner,
-                state: 'active',
-                per_page: 100
-            };
-        }
-        // Iterate over all package versions.
-        for await (const response of this.config.octokit.paginate.iterator(getFunc, getParams)) {
-            for (const packageVersion of response.data) {
-                // Add the digest to the internal map.
-                this.digest2version.set(packageVersion.name, packageVersion);
-                // Add each tag to the internal map.
-                for (const tag of packageVersion.metadata.container.tags) {
-                    this.tag2version.set(tag, packageVersion);
-                }
-            }
-        }
-    }
-    /**
-     * Return the tags for the package.
-     * @returns The tags for the package.
-     */
-    getTags() {
-        return Array.from(this.tag2version.keys());
-    }
-    /**
-     * Return the package version for a tag.
-     * @param tag The tag to search for.
-     * @returns The package version for the tag.
-     */
-    getVersionForTag(tag) {
-        return this.tag2version.get(tag);
-    }
-    /**
-     Return the digests for the package.
-     * @returns The digests for the package.
-     */
-    getDigests() {
-        return Array.from(this.digest2version.keys());
-    }
-    /**
-     * Return the package version for a digest.
-     * @param digest The digest to search for.
-     * @returns The package version for the digest.
-     */
-    getVersionForDigest(digest) {
-        return this.digest2version.get(digest);
-    }
-    /**
-     * Return all versions of the package.
-     * @returns All versions of the package.
-     */
-    getVersions() {
-        return Array.from(this.digest2version.values());
-    }
-    /**
-     * Delete a package version.
-     * @param id The ID of the package version to delete.
-     */
-    async deletePackageVersion(id) {
-        if (!this.config.dryRun) {
-            if (this.repoType === 'User') {
-                if (this.config.isPrivateRepo) {
-                    await this.config.octokit.rest.packages.deletePackageVersionForAuthenticatedUser({
-                        package_type: 'container',
-                        package_name: this.config.package,
-                        package_version_id: id
-                    });
-                }
-                else {
-                    await this.config.octokit.rest.packages.deletePackageVersionForUser({
-                        package_type: 'container',
-                        package_name: this.config.package,
-                        username: this.config.owner,
-                        package_version_id: id
-                    });
-                }
-            }
-            else {
-                await this.config.octokit.rest.packages.deletePackageVersionForOrg({
-                    package_type: 'container',
-                    package_name: this.config.package,
-                    org: this.config.owner,
-                    package_version_id: id
-                });
-            }
-        }
-    }
-}
-
 ;// CONCATENATED MODULE: ./src/main.ts
-
 
 
 
@@ -40141,20 +40127,15 @@ async function run() {
 class CleanupAction {
     // Configuration.
     config;
-    // Provides access to the container image registry.
-    registry;
     // Provides access to the package repository.
     githubPackageRepo;
     constructor() {
         // Get action configuration.
         this.config = getConfig();
         // Initialize registry and package repository.
-        this.registry = new Registry(this.config);
         this.githubPackageRepo = new GithubPackageRepo(this.config);
     }
     async init() {
-        // Login to the registry.
-        await this.registry.login();
         // Initialize the package repository.
         await this.githubPackageRepo.init();
     }
@@ -40192,11 +40173,16 @@ class CleanupAction {
         }
         return result;
     }
+    isMultiArch(manifest) {
+        return (manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
+            manifest.mediaType ===
+                'application/vnd.docker.distribution.manifest.list.v2+json');
+    }
     /**
      * Returns the digests of all versions recursively reachable from the given tags.
      *
      * @param tags - The tags to determine the reachable versions for.
-     * @returns The set of digests of reachable digests.
+     * @returns The set of reachable digests.
      */
     async getReachableDigestsForTags(tags) {
         // The result.
@@ -40219,6 +40205,51 @@ class CleanupAction {
         return Array.from(result);
     }
     /**
+     * Returns the digests of all versions recursively reachable from the given digests.
+     *
+     * @param digests - The digests to determine the reachable versions for.
+     * @returns The set of reachable digests.
+     */
+    async getReachableDigestsForDigests(digests) {
+        // The result.
+        const result = new Set();
+        // Loop over all digests.
+        for (const digest of digests) {
+            core.startGroup(`Determine reachable versions for digest ${digest}.`);
+            // Starting with the version's digest, recursively determine all reachable versions.
+            const reachable = await this.getReachableDigestsForDigest(digest);
+            // Add all reachable versions to the result.
+            for (const child of reachable) {
+                result.add(child);
+            }
+            core.endGroup();
+        }
+        return Array.from(result);
+    }
+    // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
+    async getManifest(digest) {
+        try {
+            core.debug(`Getting manifest for digest ${digest}.`);
+            // Get the manifest for the digest. May throw an exception.
+            const manifest = await this.githubPackageRepo.getManifestByDigest(digest);
+            core.debug(`Manifest for digest ${digest}:`);
+            core.debug(JSON.stringify(manifest, null, 2));
+            return manifest;
+        }
+        catch (error) {
+            // Handle exception.
+            if (error instanceof ManifestNotFoundException) {
+                // Manifest not found. Log error and return null.
+                core.error(`Manifest for digest ${digest} not found in repository. Skipping.`);
+                return null;
+            }
+            else {
+                // Re-throw other errors.
+                throw error;
+            }
+        }
+    }
+    /**
      * Retrieves the digests reachable from a given digest.
      *
      * The result includes the given digest as well.
@@ -40229,31 +40260,8 @@ class CleanupAction {
     async getReachableDigestsForDigest(digest) {
         // The result.
         const result = [];
-        // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
-        const getManifest = async () => {
-            try {
-                core.debug(`Getting manifest for digest ${digest}.`);
-                // Get the manifest for the digest. May throw an exception.
-                const manifest = await this.registry.getManifestByDigest(digest);
-                core.debug(`Manifest for digest ${digest}:`);
-                core.debug(JSON.stringify(manifest, null, 2));
-                return manifest;
-            }
-            catch (error) {
-                // Handle exception.
-                if (error instanceof ManifestNotFoundException) {
-                    // Manifest not found. Log error and return null.
-                    core.error(`Manifest for digest ${digest} not found in repository. Skipping.`);
-                    return null;
-                }
-                else {
-                    // Re-throw other errors.
-                    throw error;
-                }
-            }
-        };
         // Get the manifest for the given digest.
-        const manifest = await getManifest();
+        const manifest = await this.getManifest(digest);
         if (!manifest) {
             // Manifest not found. Return empty set.
             return result;
@@ -40261,9 +40269,7 @@ class CleanupAction {
         // Add the cgiven digest to the result, since it points to an existing manifest.
         result.push(digest);
         // Check the media type of the manifest.
-        if (manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
-            manifest.mediaType ===
-                'application/vnd.docker.distribution.manifest.list.v2+json') {
+        if (this.isMultiArch(manifest)) {
             // Manifest list, i.e. a multi-architecture image pointing to multiple child manifests.
             core.info(`- ${digest}: manifest list`);
             // Recursively get all reachable versions for each child manifest.
@@ -40311,7 +40317,7 @@ class CleanupAction {
         if (version) {
             core.debug(JSON.stringify(version, null, 2));
             // Get the manifest for the version digest.
-            const manifest = await this.registry.getManifestByDigest(version.name);
+            const manifest = await this.githubPackageRepo.getManifestByDigest(version.name);
             // Clone the manifest.
             const manifest0 = JSON.parse(JSON.stringify(manifest));
             // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
@@ -40320,12 +40326,12 @@ class CleanupAction {
             if (manifest0.manifests) {
                 // Multi-arch manifest. Remove any pointers to child manifests.
                 manifest0.manifests = [];
-                await this.registry.putManifest(tag, manifest0);
+                await this.githubPackageRepo.putManifest(tag, manifest0);
             }
             else {
                 // Single-architecture or attestation manifest. Remove any pointers to layers.
                 manifest0.layers = [];
-                await this.registry.putManifest(tag, manifest0);
+                await this.githubPackageRepo.putManifest(tag, manifest0);
             }
             // Reload the package repository to update the version cache.
             await this.githubPackageRepo.loadVersions();
@@ -40463,23 +40469,33 @@ class CleanupAction {
                 .filter(digest => !c_digest.includes(digest))
                 .filter(digest => !d_digest.includes(digest))
                 .sort((a, b) => {
-                return (Date.parse(this.githubPackageRepo.getVersionForDigest(b)?.updated_at ??
-                    '1970-01-01T00:00:00Z') -
-                    Date.parse(this.githubPackageRepo.getVersionForDigest(a)?.updated_at ??
-                        '1970-01-01T00:00:00Z'));
+                const aVersion = this.githubPackageRepo.getVersionForDigest(a);
+                const bVersion = this.githubPackageRepo.getVersionForDigest(b);
+                return (Date.parse(bVersion?.updated_at ?? '1970-01-01T00:00:00Z') -
+                    Date.parse(aVersion?.updated_at ?? '1970-01-01T00:00:00Z'));
             });
-            core.info('Remaining digest to consider:');
+            core.info('Remaining digests to consider:');
             this.logItems(imagesRest);
             // 8. Determine E_digest.
-            e_digest =
-                this.config.keepNuntagged != null
-                    ? imagesRest.slice(0, this.config.keepNuntagged)
-                    : imagesRest;
-            // 9. Determine F_digest.
-            f_digest =
-                this.config.keepNuntagged != null
-                    ? imagesRest.slice(this.config.keepNuntagged)
-                    : [];
+            const e_digest0 = this.config.keepNuntagged != null
+                ? imagesRest.slice(0, this.config.keepNuntagged)
+                : imagesRest;
+            // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
+            e_digest = [];
+            for (const digest of e_digest0) {
+                const reachable = await this.getReachableDigestsForDigest(digest);
+                for (const child of reachable) {
+                    // Avoid duplicates.
+                    if (!e_digest.includes(child))
+                        e_digest.push(child);
+                }
+                if (this.config.keepNuntagged != null &&
+                    e_digest.length >= this.config.keepNuntagged) {
+                    break;
+                }
+            }
+            // 9. Determine F_digest as imagesRest with images in E_digest removed.
+            f_digest = imagesRest.filter(digest => !e_digest.includes(digest));
             core.info(`Most recent ${this.config.keepNuntagged} untagged images to keep:`);
             this.logItems(e_digest);
             core.info('Remaining untagged images to delete:');
@@ -40493,7 +40509,9 @@ class CleanupAction {
             const digestsDelete = a_digest
                 .concat(d_digest)
                 .concat(f_digest)
-                .filter(digest => !b_digest.includes(digest) && !c_digest.includes(digest));
+                .filter(digest => !b_digest.includes(digest) &&
+                !c_digest.includes(digest) &&
+                !e_digest.includes(digest));
             this.logItems(digestsDelete);
             core.endGroup();
             // Delete the tags.

@@ -133,7 +133,7 @@ export function getConfig(): Config {
   if (core.getInput('dry-run')) {
     config.dryRun = core.getBooleanInput('dry-run')
     if (config.dryRun) {
-      core.info('in dry run mode - no packages will be deleted')
+      core.info('Dry-run mode enabled. No versions will actually be deleted.')
     }
   } else {
     config.dryRun = false

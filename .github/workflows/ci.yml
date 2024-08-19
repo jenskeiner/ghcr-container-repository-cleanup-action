@@ -114,7 +114,7 @@ jobs:
             purpose:
               'Check that the latest n untagged images are kept. (multi arch)'
             folder: '09_keep_n_untagged_multi_arch'
-            keep-n-untagged: 3
+            keep-n-untagged: 10
           - title: 'All options (single arch)'
             purpose:
               'Check that the combination of all options works correctly.

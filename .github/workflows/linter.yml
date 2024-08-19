@@ -53,3 +53,4 @@ jobs:
           # attestations not supoprted in actionlint until v1.7.0 version
           VALIDATE_GITHUB_ACTIONS: false
           VALIDATE_TYPESCRIPT_STANDARD: false
+          MARKDOWN_CONFIG_FILE: .markdown-lint.yml

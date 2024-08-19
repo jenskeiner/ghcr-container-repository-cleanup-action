@@ -7,7 +7,6 @@ import fs from 'fs'
 import * as core from '@actions/core'
 import { Config } from './config.js'
 import { GithubPackageRepo } from './github-package.js'
-import { Registry } from './registry.js'
 import { SpawnSyncOptionsWithStringEncoding, spawnSync } from 'child_process'
 
 function assertString(input: unknown): asserts input is string {
@@ -243,9 +242,6 @@ export async function run(): Promise<void> {
   }
 
   config.owner = config.owner?.toLowerCase()
-
-  const registry = new Registry(config)
-  await registry.login()
 
   const githubPackageRepo = new GithubPackageRepo(config)
   await githubPackageRepo.init()

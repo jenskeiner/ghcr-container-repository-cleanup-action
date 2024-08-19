@@ -18,6 +18,12 @@ sha256:9adfdd8d78315e5163b6c943d596240e2eb2b75e8c589dc7600395e0717f6795 // 1.34-
 sha256:92f6eed1de620dd42e1fb36e4a04e394d462b180cb48672189a90cb236df35f7 // 1.34-uclibc linux/riscv64
 
 sha256:b4899072f500eabf2504e7d0348955b46cd3f60dcbb3bc97ff56e5ef793263f7 // 1.35-glibc multi-arch manifest list (untagged)
+sha256:5b6e7aeda43f426b6423f60da863e2e6015c9983c957cf1b068120aea609261d // 1.35-glibc linux/amd64 (untagged)
+sha256:54509ae339e00f7cc43d1602f22371cf842f3d142d4abd75079414b16eb15627 // 1.35-glibc linux/arm/v5 (untagged)
+sha256:b69afc232d8b05daa486c966b22df7f630822cc5843edec4c5d819f442a507ad // 1.35-glibc linux/arm/v7 (untagged)
+sha256:eb427d855f82782c110b48b9a398556c629ce4951ae252c6f6751a136e194668 // 1.35-glibc linux/arm64/v8 (untagged)
+sha256:44fd486bb2baf1956d70a557332b3e65aa536c8fbf2794a57225e1434abcec3f // 1.35-glibc linux/386 (untagged)
+sha256:def531aefe5ed95e2a31db49a8febfc821af0c60ad237d2b2785dbfadbca4654 // 1.35-glibc linux/mips64le (untagged)
 sha256:7033ccb216e3d50435f389125e4bcbab60c1eeb11c2efb921f8a6ba051fba44e // 1.35-glibc linux/ppc64le (untagged)
 sha256:427e650d8e154867a0565876a8f75ff3bb3b0c478e8cb0958bef3e94a6233627 // 1.35-glibc linux/riscv64 (untagged)
 sha256:3c38b35913846e31ff760be79d619901cc0ae97dd2518b1861f6baff810b71b7 // 1.35-glibc linux/s390x (untagged)
