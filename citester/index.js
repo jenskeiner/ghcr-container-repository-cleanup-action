@@ -34470,14 +34470,12 @@ __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_2__ = __nccwpck_require__(2186);
 /* harmony import */ var _actions_core__WEBPACK_IMPORTED_MODULE_2___default = /*#__PURE__*/__nccwpck_require__.n(_actions_core__WEBPACK_IMPORTED_MODULE_2__);
 /* harmony import */ var _config_js__WEBPACK_IMPORTED_MODULE_3__ = __nccwpck_require__(1634);
-/* harmony import */ var _github_package_js__WEBPACK_IMPORTED_MODULE_6__ = __nccwpck_require__(1693);
-/* harmony import */ var _registry_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(5719);
+/* harmony import */ var _github_package_js__WEBPACK_IMPORTED_MODULE_4__ = __nccwpck_require__(5768);
 /* harmony import */ var child_process__WEBPACK_IMPORTED_MODULE_5__ = __nccwpck_require__(2081);
 /* harmony import */ var child_process__WEBPACK_IMPORTED_MODULE_5___default = /*#__PURE__*/__nccwpck_require__.n(child_process__WEBPACK_IMPORTED_MODULE_5__);
 /**
  * A utility to prime, setup and test CI use cases
  */
-
 
 
 
@@ -34664,9 +34662,7 @@ async function run() {
         }
     }
     config.owner = config.owner?.toLowerCase();
-    const registry = new _registry_js__WEBPACK_IMPORTED_MODULE_4__/* .Registry */ .B(config);
-    await registry.login();
-    const githubPackageRepo = new _github_package_js__WEBPACK_IMPORTED_MODULE_6__/* .GithubPackageRepo */ .l(config);
+    const githubPackageRepo = new _github_package_js__WEBPACK_IMPORTED_MODULE_4__/* .GithubPackageRepo */ .l(config);
     await githubPackageRepo.init();
     const packagesById = new Map();
     // Digest of busybox image to be used as dummy image. Corresponds to busybox:1.31.
@@ -35355,7 +35351,7 @@ function getConfig() {
     if (core.getInput('dry-run')) {
         config.dryRun = core.getBooleanInput('dry-run');
         if (config.dryRun) {
-            core.info('in dry run mode - no packages will be deleted');
+            core.info('Dry-run mode enabled. No versions will actually be deleted.');
         }
     }
     else {
@@ -35415,170 +35411,13 @@ function getConfig() {
 
 /***/ }),
 
-/***/ 1693:
-/***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
-
-/* harmony export */ __nccwpck_require__.d(__webpack_exports__, {
-/* harmony export */   "l": () => (/* binding */ GithubPackageRepo)
-/* harmony export */ });
-/**
- * Provides access to a package via the GitHub Packages REST API.
- */
-class GithubPackageRepo {
-    // The action configuration
-    config;
-    // The type of repository (User or Organization)
-    repoType = 'Organization';
-    // Map of tags to package versions.
-    tag2version = new Map();
-    // Map of digests to package versions.
-    digest2version = new Map();
-    /**
-     * Constructor.
-     *
-     * @param config The action configuration
-     */
-    constructor(config) {
-        this.config = config;
-    }
-    async init() {
-        // Determine the repository type (User or Organization).
-        this.repoType = await this.config.getOwnerType();
-    }
-    /**
-     * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
-     */
-    async loadVersions() {
-        // Clear the internal maps.
-        this.tag2version.clear();
-        this.digest2version.clear();
-        // Function to retrieve package versions.
-        let getFunc;
-        // Parameters for the function call.
-        let getParams;
-        if (this.repoType === 'User') {
-            // Use the appropriate function for user repos.
-            getFunc = this.config.isPrivateRepo
-                ? this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
-                : this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByUser;
-            // Parameters for the function call.
-            getParams = {
-                package_type: 'container',
-                package_name: this.config.package,
-                username: this.config.owner,
-                state: 'active',
-                per_page: 100
-            };
-        }
-        else {
-            getFunc =
-                this.config.octokit.rest.packages
-                    .getAllPackageVersionsForPackageOwnedByOrg;
-            // Parameters for the function call.
-            getParams = {
-                package_type: 'container',
-                package_name: this.config.package,
-                org: this.config.owner,
-                state: 'active',
-                per_page: 100
-            };
-        }
-        // Iterate over all package versions.
-        for await (const response of this.config.octokit.paginate.iterator(getFunc, getParams)) {
-            for (const packageVersion of response.data) {
-                // Add the digest to the internal map.
-                this.digest2version.set(packageVersion.name, packageVersion);
-                // Add each tag to the internal map.
-                for (const tag of packageVersion.metadata.container.tags) {
-                    this.tag2version.set(tag, packageVersion);
-                }
-            }
-        }
-    }
-    /**
-     * Return the tags for the package.
-     * @returns The tags for the package.
-     */
-    getTags() {
-        return Array.from(this.tag2version.keys());
-    }
-    /**
-     * Return the package version for a tag.
-     * @param tag The tag to search for.
-     * @returns The package version for the tag.
-     */
-    getVersionForTag(tag) {
-        return this.tag2version.get(tag);
-    }
-    /**
-     Return the digests for the package.
-     * @returns The digests for the package.
-     */
-    getDigests() {
-        return Array.from(this.digest2version.keys());
-    }
-    /**
-     * Return the package version for a digest.
-     * @param digest The digest to search for.
-     * @returns The package version for the digest.
-     */
-    getVersionForDigest(digest) {
-        return this.digest2version.get(digest);
-    }
-    /**
-     * Return all versions of the package.
-     * @returns All versions of the package.
-     */
-    getVersions() {
-        return Array.from(this.digest2version.values());
-    }
-    /**
-     * Delete a package version.
-     * @param id The ID of the package version to delete.
-     */
-    async deletePackageVersion(id) {
-        if (!this.config.dryRun) {
-            if (this.repoType === 'User') {
-                if (this.config.isPrivateRepo) {
-                    await this.config.octokit.rest.packages.deletePackageVersionForAuthenticatedUser({
-                        package_type: 'container',
-                        package_name: this.config.package,
-                        package_version_id: id
-                    });
-                }
-                else {
-                    await this.config.octokit.rest.packages.deletePackageVersionForUser({
-                        package_type: 'container',
-                        package_name: this.config.package,
-                        username: this.config.owner,
-                        package_version_id: id
-                    });
-                }
-            }
-            else {
-                await this.config.octokit.rest.packages.deletePackageVersionForOrg({
-                    package_type: 'container',
-                    package_name: this.config.package,
-                    org: this.config.owner,
-                    package_version_id: id
-                });
-            }
-        }
-    }
-}
-
-
-/***/ }),
-
-/***/ 5719:
+/***/ 5768:
 /***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
 
 
 // EXPORTS
 __nccwpck_require__.d(__webpack_exports__, {
-  "B": () => (/* binding */ Registry)
+  "l": () => (/* binding */ GithubPackageRepo)
 });
 
 // UNUSED EXPORTS: ManifestNotFoundException
@@ -40948,7 +40787,7 @@ function isValidChallenge(attributes) {
     return valid;
 }
 
-;// CONCATENATED MODULE: ./src/registry.ts
+;// CONCATENATED MODULE: ./src/github-package.ts
 
 
 
@@ -40959,21 +40798,27 @@ class ManifestNotFoundException extends Error {
     }
 }
 /**
- * Provides access to the GitHub Container Registry via the Docker Registry HTTP API V2.
+ * Provides access to a package via the GitHub Packages REST API.
  */
-class Registry {
-    // Action configuration.
+class GithubPackageRepo {
+    // The action configuration
     config;
+    // The type of repository (User or Organization)
+    repoType = 'Organization';
+    // Map of tags to package versions.
+    tag2version = new Map();
+    // Map of digests to package versions.
+    digest2version = new Map();
     // HTTP client.
     axios;
     // Cache of loaded manifests, by digest.
     manifestCache = new Map();
     /**
-     * @constructor
-     * @param {Config} config - The configuration object.
+     * Constructor.
+     *
+     * @param config The action configuration
      */
     constructor(config) {
-        // Save configuration.
         this.config = config;
         // Create HTTP client.
         this.axios = lib_axios.create({
@@ -40983,7 +40828,7 @@ class Registry {
         esm(this.axios, { retries: 3 });
         // Set up default request headers.
         this.axios.defaults.headers.common.Accept =
-            'application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json';
+            'application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json';
     }
     /**
      * Handles the authentication challenge.
@@ -41039,6 +40884,136 @@ class Registry {
                 else {
                     throw error;
                 }
+            }
+        }
+    }
+    async init() {
+        // Determine the repository type (User or Organization).
+        this.repoType = await this.config.getOwnerType();
+        await this.login();
+    }
+    /**
+     * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
+     */
+    async loadVersions() {
+        // Clear the internal maps.
+        this.tag2version.clear();
+        this.digest2version.clear();
+        // Function to retrieve package versions.
+        let getFunc;
+        // Parameters for the function call.
+        let getParams;
+        if (this.repoType === 'User') {
+            // Use the appropriate function for user repos.
+            getFunc = this.config.isPrivateRepo
+                ? this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
+                : this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByUser;
+            // Parameters for the function call.
+            getParams = {
+                package_type: 'container',
+                package_name: this.config.package,
+                username: this.config.owner,
+                state: 'active',
+                per_page: 100
+            };
+        }
+        else {
+            getFunc =
+                this.config.octokit.rest.packages
+                    .getAllPackageVersionsForPackageOwnedByOrg;
+            // Parameters for the function call.
+            getParams = {
+                package_type: 'container',
+                package_name: this.config.package,
+                org: this.config.owner,
+                state: 'active',
+                per_page: 100
+            };
+        }
+        // Iterate over all package versions.
+        for await (const response of this.config.octokit.paginate.iterator(getFunc, getParams)) {
+            for (const packageVersion of response.data) {
+                // Get the manifest for the package version.
+                const manifest = await this.getManifestByDigest(packageVersion.name);
+                packageVersion.manifest = manifest;
+                // Add the digest to the internal map.
+                this.digest2version.set(packageVersion.name, packageVersion);
+                // Add each tag to the internal map.
+                for (const tag of packageVersion.metadata.container.tags) {
+                    this.tag2version.set(tag, packageVersion);
+                }
+            }
+        }
+    }
+    /**
+     * Return the tags for the package.
+     * @returns The tags for the package.
+     */
+    getTags() {
+        return Array.from(this.tag2version.keys());
+    }
+    /**
+     * Return the package version for a tag.
+     * @param tag The tag to search for.
+     * @returns The package version for the tag.
+     */
+    getVersionForTag(tag) {
+        return this.tag2version.get(tag);
+    }
+    /**
+     Return the digests for the package.
+     * @returns The digests for the package.
+     */
+    getDigests() {
+        return Array.from(this.digest2version.keys());
+    }
+    /**
+     * Return the package version for a digest.
+     * @param digest The digest to search for.
+     * @returns The package version for the digest.
+     */
+    getVersionForDigest(digest) {
+        return this.digest2version.get(digest);
+    }
+    /**
+     * Return all versions of the package.
+     * @returns All versions of the package.
+     */
+    getVersions() {
+        return Array.from(this.digest2version.values());
+    }
+    /**
+     * Delete a package version.
+     * @param id The ID of the package version to delete.
+     */
+    async deletePackageVersion(id) {
+        if (!this.config.dryRun) {
+            if (this.repoType === 'User') {
+                if (this.config.isPrivateRepo) {
+                    await this.config.octokit.rest.packages.deletePackageVersionForAuthenticatedUser({
+                        package_type: 'container',
+                        package_name: this.config.package,
+                        package_version_id: id
+                    });
+                }
+                else {
+                    await this.config.octokit.rest.packages.deletePackageVersionForUser({
+                        package_type: 'container',
+                        package_name: this.config.package,
+                        username: this.config.owner,
+                        package_version_id: id
+                    });
+                }
+            }
+            else {
+                await this.config.octokit.rest.packages.deletePackageVersionForOrg({
+                    package_type: 'container',
+                    package_name: this.config.package,
+                    org: this.config.owner,
+                    package_version_id: id
+                });
             }
         }
     }
