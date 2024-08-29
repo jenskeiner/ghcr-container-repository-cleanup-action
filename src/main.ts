@@ -98,7 +98,7 @@ class CleanupAction {
       const version = this.githubPackageRepo.getVersion(tag)
       if (version) {
         // Starting with the version's digest, recursively determine all reachable versions.
-        const reachable = await this.getReachableDigestsForDigest(version.name)
+        const reachable = await this.getReachableVersions(version.name)
         // Add all reachable versions to the result.
         for (const child of reachable) {
           result.add(child)
@@ -126,7 +126,7 @@ class CleanupAction {
     for (const digest of digests) {
       core.startGroup(`Determine reachable versions for digest ${digest}.`)
       // Starting with the version's digest, recursively determine all reachable versions.
-      const reachable = await this.getReachableDigestsForDigest(digest)
+      const reachable = await this.getReachableVersions(digest)
       // Add all reachable versions to the result.
       for (const child of reachable) {
         result.add(child)
@@ -169,25 +169,28 @@ class CleanupAction {
    * @param digest - The digest for which to retrieve the reachable digests.
    * @returns The set of digests of reachable digests.
    */
-  async getReachableDigestsForDigest(digest: string): Promise<string[]> {
+  async getReachableVersions(key: string): Promise<string[]> {
     // The result.
     const result: string[] = []
 
-    // Get the manifest for the given digest.
-    const manifest = await this.getManifest(digest)
+    // Get the version for the given key.
+    const version = this.githubPackageRepo.getVersion(key)
 
-    if (!manifest) {
+    // Get the manifest for the given key.
+    const manifest = await this.getManifest(key)
+
+    if (!version || !manifest) {
       // Manifest not found. Return empty set.
       return result
     }
 
-    // Add the cgiven digest to the result, since it points to an existing manifest.
-    result.push(digest)
+    // Add the digest of the version to the result.
+    result.push(version.name)
 
     // Check the media type of the manifest.
     if (this.isMultiArch(manifest)) {
       // Manifest list, i.e. a multi-architecture image pointing to multiple child manifests.
-      core.info(`- ${digest}: manifest list`)
+      core.info(`- ${key}: manifest list`)
 
       // Recursively get all reachable versions for each child manifest.
       // Note: Exceptions will not be caught here if errors occur for any child. This is
@@ -197,39 +200,47 @@ class CleanupAction {
         const mediaType = child.mediaType
         if (isValidMediaType(mediaType)) {
           // Get reachable versions for current child.
-          const reachable = await this.getReachableDigestsForDigest(
-            child.digest
-          )
+          const reachable = await this.getReachableVersions(child.digest)
           // Add all reachable versions to result.
           for (const i of reachable) {
             result.push(i)
           }
         } else {
           core.warning(
-            `- ${digest}: Ignoring child manifest ${child.digest} with media type ${child.mediaType}.`
+            `- ${key}: Ignoring child manifest ${child.digest} with media type ${child.mediaType}.`
           )
         }
       }
     } else if (
-      manifest.mediaType === 'application/vnd.oci.image.manifest.v1+json' ||
-      manifest.mediaType ===
-        'application/vnd.docker.distribution.manifest.v2+json'
+      manifest.layers.length === 1 &&
+      manifest.layers[0].mediaType === 'application/vnd.in-toto+json'
     ) {
-      // Image manifest. Can be a single-architecture image or an attestation.
-
-      if (
-        manifest.layers.length === 1 &&
-        manifest.layers[0].mediaType === 'application/vnd.in-toto+json'
-      ) {
-        // Attestation.
-        core.info(`- ${digest}: attestation manifest`)
-      } else {
-        // Single-architecture image.
-        core.info(`- ${digest}: image manifest`)
-      }
+      // Attestation.
+      core.info(`- ${key}: attestation manifest`)
     } else {
-      // Unknown media type.
-      core.warning(`- ${digest}: unknown manifest type ${manifest.mediaType}`)
+      // Single-architecture image.
+      core.info(`- ${key}: image manifest`)
+    }
+
+    // Check if there's a GitHub attestation for this version. There is no direct link from the version to the attestation.
+    // Instead, the attestation image is tagged with the version digest.
+
+    // Get the attestation image tag by taking version.name and replacing : with -.
+    const attestationTag = version.name.replace(':', '-')
+
+    // Get the attestation image version.
+    const attestationVersion = this.githubPackageRepo.getVersion(attestationTag)
+
+    if (attestationVersion) {
+      core.info(
+        `Found attestation image for ${key}: ${JSON.stringify(attestationVersion)}.`
+      )
+      // Get reachable versions for the attestation image.
+      const reachable = await this.getReachableVersions(attestationVersion.name)
+      // Add all reachable versions to result.
+      for (const i of reachable) {
+        result.push(i)
+      }
     }
 
     return result
@@ -413,7 +424,7 @@ class CleanupAction {
       // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
       e_digest = []
       for (const digest of e_digest0) {
-        const reachable = await this.getReachableDigestsForDigest(digest)
+        const reachable = await this.getReachableVersions(digest)
         for (const child of reachable) {
           // Avoid duplicates.
           if (!e_digest.includes(child)) e_digest.push(child)
