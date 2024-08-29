@@ -35,7 +35,7 @@ export class GithubPackageRepo {
   versions = new Map<string | number, PackageVersion>()
 
   // Maps digest, tag, or id to manifest.
-  manifests = new Map<string | number, ManifestSchemaInterface>()
+  manifests = new Map<string | number, ManifestSchemaInterface | undefined>()
 
   // Collection of tags.
   tags = new Set<string>()
@@ -137,7 +137,10 @@ export class GithubPackageRepo {
    * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
    */
   private async mapVersions(
-    fn: (version: PackageVersion, manifest: ManifestSchemaInterface) => void
+    fn: (
+      version: PackageVersion,
+      manifest: ManifestSchemaInterface | undefined
+    ) => void
   ): Promise<void> {
     // Function to retrieve package versions.
     let getFunc
@@ -185,7 +188,18 @@ export class GithubPackageRepo {
         const version = parsePackageVersion(JSON.stringify(packageVersion))
 
         // Get the manifest for the package version.
-        const manifest = await this.fetchManifest(version.name)
+        let manifest: undefined | ManifestSchemaInterface
+        try {
+          manifest = await this.fetchManifest(version.name)
+        } catch (error) {
+          if (error instanceof ManifestNotFoundException) {
+            core.warning(error.message)
+            //manifest = undefined
+            throw error
+          } else {
+            throw error
+          }
+        }
 
         fn(version, manifest)
       }
@@ -194,7 +208,7 @@ export class GithubPackageRepo {
 
   private addVersion(
     version: PackageVersion,
-    manifest: ManifestSchemaInterface
+    manifest: ManifestSchemaInterface | undefined
   ): void {
     this.versions.set(version.name, version)
     this.versions.set(version.id, version)
@@ -331,10 +345,10 @@ export class GithubPackageRepo {
       if (
         isAxiosError(error) &&
         error.response != null &&
-        error.response.status === 400
+        error.response.status === 404
       ) {
         throw new ManifestNotFoundException(
-          `Manifest not found for digest ${digest}`
+          `Manifest not found for digest ${digest}.`
         )
       } else {
         throw error
@@ -436,7 +450,7 @@ export class GithubPackageRepo {
 
     const fn = (
       version_: PackageVersion,
-      manifest_: ManifestSchemaInterface
+      manifest_: ManifestSchemaInterface | undefined
     ): void => {
       if (version_.metadata.container.tags.includes(tag)) {
         this.addVersion(version_, manifest_)

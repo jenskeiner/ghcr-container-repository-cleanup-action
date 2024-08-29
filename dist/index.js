@@ -45845,7 +45845,20 @@ class GithubPackageRepo {
             for (const packageVersion of response.data) {
                 const version = parsePackageVersion(JSON.stringify(packageVersion));
                 // Get the manifest for the package version.
-                const manifest = await this.fetchManifest(version.name);
+                let manifest;
+                try {
+                    manifest = await this.fetchManifest(version.name);
+                }
+                catch (error) {
+                    if (error instanceof ManifestNotFoundException) {
+                        core.warning(error.message);
+                        //manifest = undefined
+                        throw error;
+                    }
+                    else {
+                        throw error;
+                    }
+                }
                 fn(version, manifest);
             }
         }
@@ -45960,8 +45973,8 @@ class GithubPackageRepo {
         catch (error) {
             if (axios_isAxiosError(error) &&
                 error.response != null &&
-                error.response.status === 400) {
-                throw new ManifestNotFoundException(`Manifest not found for digest ${digest}`);
+                error.response.status === 404) {
+                throw new ManifestNotFoundException(`Manifest not found for digest ${digest}.`);
             }
             else {
                 throw error;
@@ -46219,6 +46232,7 @@ class CleanupAction {
             // Manifest not found. Return empty set.
             return result;
         }
+        core.info(`manifest: ${JSON.stringify(manifest)}`);
         // Add the cgiven digest to the result, since it points to an existing manifest.
         result.push(digest);
         // Check the media type of the manifest.

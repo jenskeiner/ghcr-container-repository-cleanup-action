@@ -180,6 +180,8 @@ class CleanupAction {
       return result
     }
 
+    core.info(`manifest: ${JSON.stringify(manifest)}`)
+
     // Add the cgiven digest to the result, since it points to an existing manifest.
     result.push(digest)
 
