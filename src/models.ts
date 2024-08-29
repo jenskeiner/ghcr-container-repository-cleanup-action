@@ -1,9 +1,24 @@
+const mediaTypes = [
+  'application/vnd.oci.image.manifest.v1+json',
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.docker.distribution.manifest.v2+json'
+]
+
+export function isMediaType(value: unknown): value is MediaType {
+  return mediaTypes.includes(value as MediaType)
+}
+
+export type MediaType =
+  | 'application/vnd.oci.image.manifest.v1+json'
+  | 'application/vnd.oci.image.index.v1+json'
+  | 'application/vnd.docker.distribution.manifest.list.v2+json'
+  | 'application/vnd.docker.distribution.manifest.v2+json'
+
+// export type MediaType = (typeof mediaTypes)[number]
+
 export interface ManifestSchemaInterface {
-  mediaType:
-    | 'application/vnd.oci.image.manifest.v1+json'
-    | 'application/vnd.oci.image.index.v1+json'
-    | 'application/vnd.docker.distribution.manifest.list.v2+json'
-    | 'application/vnd.docker.distribution.manifest.v2+json'
+  mediaType: MediaType
 }
 
 export enum ManifestType {

@@ -45585,6 +45585,15 @@ const packageVersionSchema = {
 };
 
 ;// CONCATENATED MODULE: ./src/models.ts
+const mediaTypes = [
+    'application/vnd.oci.image.manifest.v1+json',
+    'application/vnd.oci.image.index.v1+json',
+    'application/vnd.docker.distribution.manifest.list.v2+json',
+    'application/vnd.docker.distribution.manifest.v2+json'
+];
+function isMediaType(value) {
+    return mediaTypes.includes(value);
+}
 var ManifestType;
 (function (ManifestType) {
     ManifestType[ManifestType["SingleArchitecture"] = 0] = "SingleArchitecture";
@@ -46075,6 +46084,7 @@ class GithubPackageRepo {
 
 
 
+
 async function run() {
     try {
         // Instantiate action class.
@@ -46244,11 +46254,17 @@ class CleanupAction {
             // to prevent making inconsistent changes later. THe only error case that is handled
             // is when a manifest is not found, in which case the child is skipped; see above.
             for (const child of manifest.manifests) {
-                // Get reachable versions for current child.
-                const reachable = await this.getReachableDigestsForDigest(child.digest);
-                // Add all reachable versions to result.
-                for (const i of reachable) {
-                    result.push(i);
+                const mediaType = child.mediaType;
+                if (isMediaType(mediaType)) {
+                    // Get reachable versions for current child.
+                    const reachable = await this.getReachableDigestsForDigest(child.digest);
+                    // Add all reachable versions to result.
+                    for (const i of reachable) {
+                        result.push(i);
+                    }
+                }
+                else {
+                    core.warning(`- ${digest}: Ignoring child manifest ${child.digest} with media type ${child.mediaType}.`);
                 }
             }
         }

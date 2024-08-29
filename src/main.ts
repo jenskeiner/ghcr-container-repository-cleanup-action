@@ -4,6 +4,7 @@ import {
   GithubPackageRepo,
   ManifestNotFoundException
 } from './github-package.js'
+import { isMediaType } from './models.js'
 
 export async function run(): Promise<void> {
   try {
@@ -195,11 +196,20 @@ class CleanupAction {
       // to prevent making inconsistent changes later. THe only error case that is handled
       // is when a manifest is not found, in which case the child is skipped; see above.
       for (const child of manifest.manifests) {
-        // Get reachable versions for current child.
-        const reachable = await this.getReachableDigestsForDigest(child.digest)
-        // Add all reachable versions to result.
-        for (const i of reachable) {
-          result.push(i)
+        const mediaType = child.mediaType
+        if (isMediaType(mediaType)) {
+          // Get reachable versions for current child.
+          const reachable = await this.getReachableDigestsForDigest(
+            child.digest
+          )
+          // Add all reachable versions to result.
+          for (const i of reachable) {
+            result.push(i)
+          }
+        } else {
+          core.warning(
+            `- ${digest}: Ignoring child manifest ${child.digest} with media type ${child.mediaType}.`
+          )
         }
       }
     } else if (
