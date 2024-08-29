@@ -94,7 +94,7 @@ class CleanupAction {
     for (const tag of tags) {
       core.startGroup(`Determine reachable versions for tag ${tag}.`)
       // Get the version for the tag.
-      const version = this.githubPackageRepo.getVersionForTag(tag)
+      const version = this.githubPackageRepo.getVersion(tag)
       if (version) {
         // Starting with the version's digest, recursively determine all reachable versions.
         const reachable = await this.getReachableDigestsForDigest(version.name)
@@ -141,7 +141,7 @@ class CleanupAction {
     try {
       core.debug(`Getting manifest for digest ${digest}.`)
       // Get the manifest for the digest. May throw an exception.
-      const manifest = await this.githubPackageRepo.getManifestByDigest(digest)
+      const manifest = this.githubPackageRepo.getManifest(digest)
       core.debug(`Manifest for digest ${digest}:`)
       core.debug(JSON.stringify(manifest, null, 2))
       return manifest
@@ -225,60 +225,6 @@ class CleanupAction {
     return result
   }
 
-  /**
-   * Deletes a tag from the package registry.
-   *
-   * @param tag - The tag to be deleted.
-   * @throws {Error} If the version for the tag is not found or if the intermediate version used to delete the tag is not found.
-   */
-  async deleteTag(tag: string): Promise<void> {
-    // Get the version for the tag.
-    const version = this.githubPackageRepo.getVersionForTag(tag)
-
-    if (version) {
-      core.debug(JSON.stringify(version, null, 2))
-
-      // Get the manifest for the version digest.
-      const manifest = await this.githubPackageRepo.getManifestByDigest(
-        version.name
-      )
-
-      // Clone the manifest.
-      const manifest0 = JSON.parse(JSON.stringify(manifest))
-
-      // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
-      // Push the manifest with the given tag to the registry. This creates a new version with the
-      // tag and removes it from the original version.
-      if (manifest0.manifests) {
-        // Multi-arch manifest. Remove any pointers to child manifests.
-        manifest0.manifests = []
-        await this.githubPackageRepo.putManifest(tag, manifest0)
-      } else {
-        // Single-architecture or attestation manifest. Remove any pointers to layers.
-        manifest0.layers = []
-        await this.githubPackageRepo.putManifest(tag, manifest0)
-      }
-
-      // Reload the package repository to update the version cache.
-      await this.githubPackageRepo.loadVersions()
-
-      // Get the new version for the tag.
-      const version0 = this.githubPackageRepo.getVersionForTag(tag)
-
-      if (version0) {
-        core.debug(JSON.stringify(version0, null, 2))
-        // Delete the old version.
-        await this.githubPackageRepo.deletePackageVersion(version0.id)
-      } else {
-        throw new Error(
-          `Intermediate version used to delete tag ${tag} not found.`
-        )
-      }
-    } else {
-      throw new Error(`Version for tag ${tag} not found.`)
-    }
-  }
-
   logItems(items: string[]): void {
     if (items.length > 0) {
       for (const item of items) {
@@ -301,14 +247,17 @@ class CleanupAction {
       await this.githubPackageRepo.loadVersions()
 
       // Log total number of version retrieved.
-      const versions = this.githubPackageRepo.getVersions()
-      for (const version of versions) {
-        core.debug(
-          `- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`
-        )
+      const digests = this.githubPackageRepo.getDigests()
+      for (const digest of digests) {
+        const version = this.githubPackageRepo.getVersion(digest)
+        if (version) {
+          core.debug(
+            `- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`
+          )
+        }
       }
 
-      core.info(`Retrieved ${versions.length} versions.`)
+      core.info(`Retrieved ${digests.length} versions.`)
       core.endGroup()
 
       // The logic to determine the tags and versions to delete is as follows:
@@ -385,11 +334,11 @@ class CleanupAction {
         .sort((a: string, b: string) => {
           return (
             Date.parse(
-              this.githubPackageRepo.getVersionForTag(b)?.updated_at ??
+              this.githubPackageRepo.getVersion(b)?.updated_at ??
                 '1970-01-01T00:00:00Z'
             ) -
             Date.parse(
-              this.githubPackageRepo.getVersionForTag(a)?.updated_at ??
+              this.githubPackageRepo.getVersion(a)?.updated_at ??
                 '1970-01-01T00:00:00Z'
             )
           )
@@ -434,8 +383,8 @@ class CleanupAction {
         .filter(digest => !c_digest.includes(digest))
         .filter(digest => !d_digest.includes(digest))
         .sort((a: string, b: string) => {
-          const aVersion = this.githubPackageRepo.getVersionForDigest(a)
-          const bVersion = this.githubPackageRepo.getVersionForDigest(b)
+          const aVersion = this.githubPackageRepo.getVersion(a)
+          const bVersion = this.githubPackageRepo.getVersion(b)
           return (
             Date.parse(bVersion?.updated_at ?? '1970-01-01T00:00:00Z') -
             Date.parse(aVersion?.updated_at ?? '1970-01-01T00:00:00Z')
@@ -501,17 +450,17 @@ class CleanupAction {
       // Delete the tags.
       for (const tag of tagsDelete) {
         core.info(`Deleting tag ${tag}.`)
-        await this.deleteTag(tag)
+        await this.githubPackageRepo.deleteTag(tag)
       }
 
       // Delete the versions.
       for (const digest of digestsDelete) {
-        const version = this.githubPackageRepo.getVersionForDigest(digest)
+        const version = this.githubPackageRepo.getVersion(digest)
         if (version) {
           core.info(
             `Deleting version with digest=${version.name}, id=${version.id}.`
           )
-          await this.githubPackageRepo.deletePackageVersion(version.id)
+          await this.githubPackageRepo.deleteVersion(version.id)
         } else {
           core.info(`Version with digest ${digest} not found.`)
         }
