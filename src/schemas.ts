@@ -1,11 +1,20 @@
 import { JTDSchemaType } from 'ajv/dist/jtd.js'
 import {
-  ManifestSchemaInterface,
+  ManifestReference,
+  Manifest,
   PackageVersionMetadata,
   PackageVersion
 } from './models.js'
 
-export const manifestSchema: JTDSchemaType<ManifestSchemaInterface> = {
+export const manifestReferenceSchema: JTDSchemaType<ManifestReference> = {
+  properties: {
+    mediaType: { type: 'string' },
+    digest: { type: 'string' }
+  },
+  additionalProperties: true
+}
+
+export const manifestSchema: JTDSchemaType<Manifest> = {
   properties: {
     mediaType: {
       enum: [
@@ -14,6 +23,14 @@ export const manifestSchema: JTDSchemaType<ManifestSchemaInterface> = {
         'application/vnd.docker.distribution.manifest.list.v2+json',
         'application/vnd.docker.distribution.manifest.v2+json'
       ]
+    }
+  },
+  optionalProperties: {
+    manifests: {
+      elements: manifestReferenceSchema
+    },
+    layers: {
+      elements: manifestReferenceSchema
     }
   },
   additionalProperties: true

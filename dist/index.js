@@ -39598,7 +39598,7 @@ function wrappy (fn, cb) {
 /***/ ((module, __unused_webpack___webpack_exports__, __nccwpck_require__) => {
 
 __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __webpack_async_result__) => { try {
-/* harmony import */ var _main_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(6605);
+/* harmony import */ var _main_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2119);
 /**
  * The entrypoint for the action.
  */
@@ -39611,7 +39611,7 @@ __webpack_async_result__();
 
 /***/ }),
 
-/***/ 6605:
+/***/ 2119:
 /***/ ((__unused_webpack_module, __webpack_exports__, __nccwpck_require__) => {
 
 
@@ -45545,6 +45545,13 @@ function isValidChallenge(attributes) {
 var jtd = __nccwpck_require__(8876);
 var jtd_default = /*#__PURE__*/__nccwpck_require__.n(jtd);
 ;// CONCATENATED MODULE: ./src/schemas.ts
+const manifestReferenceSchema = {
+    properties: {
+        mediaType: { type: 'string' },
+        digest: { type: 'string' }
+    },
+    additionalProperties: true
+};
 const manifestSchema = {
     properties: {
         mediaType: {
@@ -45554,6 +45561,14 @@ const manifestSchema = {
                 'application/vnd.docker.distribution.manifest.list.v2+json',
                 'application/vnd.docker.distribution.manifest.v2+json'
             ]
+        }
+    },
+    optionalProperties: {
+        manifests: {
+            elements: manifestReferenceSchema
+        },
+        layers: {
+            elements: manifestReferenceSchema
         }
     },
     additionalProperties: true
@@ -45585,43 +45600,34 @@ const packageVersionSchema = {
 };
 
 ;// CONCATENATED MODULE: ./src/models.ts
-var ManifestType;
-(function (ManifestType) {
-    ManifestType[ManifestType["SingleArchitecture"] = 0] = "SingleArchitecture";
-    ManifestType[ManifestType["MultiArchitecture"] = 1] = "MultiArchitecture";
-})(ManifestType || (ManifestType = {}));
-class BaseSingleArchitectureManifest {
-    get type() {
-        return ManifestType.SingleArchitecture;
+class BaseManifest {
+    children;
+    constructor(children = []) {
+        this.children = children;
     }
 }
-class BaseMultiArchitectureManifest {
-    get type() {
-        return ManifestType.MultiArchitecture;
-    }
-}
-class OCIImageManifestModel extends BaseSingleArchitectureManifest {
+class OCIImageManifestModel extends BaseManifest {
     mediaType = 'application/vnd.oci.image.manifest.v1+json';
     constructor(data) {
         super();
         Object.assign(this, data);
     }
 }
-class OCIImageIndexModel extends BaseMultiArchitectureManifest {
+class OCIImageIndexModel extends BaseManifest {
     mediaType = 'application/vnd.oci.image.index.v1+json';
     constructor(data) {
-        super();
+        super(data.manifests ? data.manifests.map(manifest => manifest.digest) : []);
         Object.assign(this, data);
     }
 }
-class DockerManifestListModel extends BaseMultiArchitectureManifest {
+class DockerManifestListModel extends BaseManifest {
     mediaType = 'application/vnd.docker.distribution.manifest.list.v2+json';
     constructor(data) {
-        super();
+        super(data.manifests ? data.manifests.map(manifest => manifest.digest) : []);
         Object.assign(this, data);
     }
 }
-class DockerImageManifestModel extends BaseSingleArchitectureManifest {
+class DockerImageManifestModel extends BaseManifest {
     mediaType = 'application/vnd.docker.distribution.manifest.v2+json';
     constructor(data) {
         super();
@@ -45651,8 +45657,18 @@ class PackageVersionModel {
             tags: []
         }
     });
+    children = [];
+    parent = null;
+    type = 'unknown';
+    manifest = undefined;
     constructor(data) {
         Object.assign(this, data);
+    }
+    get is_attestation() {
+        return this.type === 'attestation root' || this.type === 'attestation child';
+    }
+    toString() {
+        return `{type=${this.type}, id=${this.id}, tags=${this.metadata.container.tags}}`;
     }
 }
 
@@ -45700,11 +45716,102 @@ function parsePackageVersion(jsonString) {
 
 
 
-class ManifestNotFoundException extends Error {
-    constructor(message) {
-        super(message);
-        this.name = 'ManifestNotFoundException';
+function visit(version, fn) {
+    // Visit version.
+    fn(version);
+    // Visit children.
+    for (const child of version.children) {
+        visit(child, fn);
     }
+}
+function scanRoots(uniqueVersions, getVersion) {
+    // Holds versions known to not be roots.
+    const nonRoots = new Set();
+    for (const v of uniqueVersions) {
+        v.children = [];
+        v.parent = null;
+        v.type = 'unknown';
+    }
+    // Loop over all versions.
+    for (const v of uniqueVersions) {
+        // Manifest should have been initialized.
+        if (v.manifest) {
+            // Loop over all digests of child manifests.
+            for (const child_digest of v.manifest.children) {
+                // Get the version for the child digest.
+                const child = getVersion(child_digest);
+                // Check if the child actually exists.
+                if (child && uniqueVersions.has(child)) {
+                    // Add child to v's children.
+                    v.children.push(child);
+                    // The child is not a root version, as per definition.
+                    nonRoots.add(child);
+                    // Add backward reference from child to parent.
+                    child.parent = v;
+                }
+            }
+        }
+    }
+    // Determine roots.
+    const roots = new Set(uniqueVersions);
+    for (const v of nonRoots) {
+        roots.delete(v);
+    }
+    // Set the type for each version.
+    for (const v of uniqueVersions) {
+        if (v.children.length > 0) {
+            v.type = 'multi-arch image';
+            continue;
+        }
+        const m = v.manifest;
+        if (m) {
+            if (m.layers &&
+                m.layers.length === 1 &&
+                m.layers[0].mediaType === 'application/vnd.in-toto+json') {
+                v.type = 'Docker attestation';
+            }
+            else {
+                v.type = 'single-arch image';
+            }
+        }
+        else {
+            v.type = 'unknown';
+        }
+    }
+    // Up to here, we have ignored GitHub attestation versions. They are linked to the version
+    // they attest via a tag that is equivalent to the digest of the attested version. Each attestation
+    // version should be removed from the roots and added to the children of the attested version.
+    // Also, the type should be adjusted for the attestation version and its children.
+    nonRoots.clear();
+    // Loop over all roots.
+    for (const r of roots) {
+        // Loop over all tags for the root.
+        for (const t of r.metadata.container.tags) {
+            // Replace - with : in the tag. If the version is an attestation,
+            // this would be the digest of the attested version.
+            const d = t.replace('-', ':');
+            // Get the version for the potential digest.
+            const v = getVersion(d);
+            // If the version exists and is not identical to r, then r is a GitHub attestation.
+            if (v && v !== r && uniqueVersions.has(v)) {
+                // Recursively set the is_attestation property to true.
+                visit(r, v0 => {
+                    v0.type = 'attestation child';
+                });
+                r.type = 'attestation root';
+                r.parent = v;
+                // Add attestation r to children of v.
+                v.children.push(r);
+                // Add r to non-roots.
+                nonRoots.add(r);
+            }
+        }
+    }
+    // Remove GitHub attestations from root.
+    for (const v of nonRoots) {
+        roots.delete(v);
+    }
+    return roots;
 }
 /**
  * Provides access to a package via the GitHub Packages REST API.
@@ -45714,14 +45821,16 @@ class GithubPackageRepo {
     config;
     // The type of repository (User or Organization)
     repoType = 'Organization';
-    // Maps digest or tag to version.
+    // Maps digest, tag, or id to version.
     versions = new Map();
-    // Maps digest, tag, or id to manifest.
-    manifests = new Map();
     // Collection of tags.
     tags = new Set();
     // Collection of digests.
     digests = new Set();
+    // Collection of unique versions.
+    uniqueVersions = new Set();
+    // Collection of root versions.
+    roots = new Set();
     // HTTP client.
     axios;
     /**
@@ -45806,20 +45915,20 @@ class GithubPackageRepo {
     /**
      * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
      */
-    async mapVersions(fn) {
+    async fetchVersions(fn) {
         // Function to retrieve package versions.
-        let getFunc;
+        let fetch;
         // Parameters for the function call.
-        let getParams;
+        let fetch_params;
         if (this.repoType === 'User') {
             // Use the appropriate function for user repos.
-            getFunc = this.config.isPrivateRepo
+            fetch = this.config.isPrivateRepo
                 ? this.config.octokit.rest.packages
                     .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
                 : this.config.octokit.rest.packages
                     .getAllPackageVersionsForPackageOwnedByUser;
             // Parameters for the function call.
-            getParams = {
+            fetch_params = {
                 package_type: 'container',
                 package_name: this.config.package,
                 username: this.config.owner,
@@ -45828,11 +45937,11 @@ class GithubPackageRepo {
             };
         }
         else {
-            getFunc =
+            fetch =
                 this.config.octokit.rest.packages
                     .getAllPackageVersionsForPackageOwnedByOrg;
             // Parameters for the function call.
-            getParams = {
+            fetch_params = {
                 package_type: 'container',
                 package_name: this.config.package,
                 org: this.config.owner,
@@ -45841,35 +45950,38 @@ class GithubPackageRepo {
             };
         }
         // Iterate over all package versions.
-        for await (const response of this.config.octokit.paginate.iterator(getFunc, getParams)) {
+        for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
             for (const packageVersion of response.data) {
                 const version = parsePackageVersion(JSON.stringify(packageVersion));
-                // Get the manifest for the package version.
                 const manifest = await this.fetchManifest(version.name);
-                fn(version, manifest);
+                version.manifest = manifest;
+                fn(version);
             }
         }
     }
-    addVersion(version, manifest) {
+    addVersion(version) {
         this.versions.set(version.name, version);
         this.versions.set(version.id, version);
         this.digests.add(version.name);
-        this.manifests.set(version.name, manifest);
-        this.manifests.set(version.id, manifest);
         // Add each tag to the internal map.
         for (const tag of version.metadata.container.tags) {
             this.versions.set(tag, version);
             this.tags.add(tag);
-            this.manifests.set(tag, manifest);
         }
+        this.uniqueVersions.add(version);
+    }
+    getRoots() {
+        return this.roots;
     }
     async loadVersions() {
         // Clear the internal maps.
         this.versions.clear();
-        this.manifests.clear();
+        this.uniqueVersions.clear();
         this.tags.clear();
         this.digests.clear();
-        return this.mapVersions(this.addVersion.bind(this));
+        await this.fetchVersions(this.addVersion.bind(this));
+        this.roots = scanRoots(this.uniqueVersions, this.getVersion.bind(this));
+        return Promise.resolve();
     }
     /**
      Return the digests for the package.
@@ -45878,12 +45990,22 @@ class GithubPackageRepo {
     getDigests() {
         return Array.from(this.digests);
     }
+    getVersions() {
+        // filter duplicates
+        return Array.from(new Set(this.versions.values()));
+    }
     /**
      * Return the tags for the package.
      * @returns The tags for the package.
      */
-    getTags() {
-        return Array.from(this.tags);
+    getTags(includeAttestations = false) {
+        const tags = Array.from(this.tags);
+        if (includeAttestations) {
+            return tags;
+        }
+        else {
+            return tags.filter(tag => !this.getVersion(tag)?.is_attestation);
+        }
     }
     /**
      * Return the package version for a tag.
@@ -45933,43 +46055,26 @@ class GithubPackageRepo {
         // Remove digest from internal set.
         this.digests.delete(version.name);
         this.versions.delete(version.name);
-        this.manifests.delete(version.name);
         // Remove tags from internal set.
         for (const tag of version.metadata.container.tags) {
             this.tags.delete(tag);
             this.versions.delete(tag);
-            this.manifests.delete(tag);
         }
         this.versions.delete(id);
-        this.manifests.delete(id);
+        this.uniqueVersions.delete(version);
+        this.roots = scanRoots(this.uniqueVersions, this.getVersion.bind(this));
     }
     /**
      * Retrieves a manifest by its digest.
      *
      * @param digest - The digest of the manifest to retrieve.
      * @returns A Promise that resolves to the retrieved manifest.
-     * @throws {ManifestNotFoundException} If the manifest is not found for the given digest.
      */
     async fetchManifest(digest) {
-        try {
-            // Retrieve the manifest.
-            const response = await this.axios.get(`/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`);
-            const manifest = parseManifest(JSON.stringify(response?.data));
-            return manifest;
-        }
-        catch (error) {
-            if (axios_isAxiosError(error) &&
-                error.response != null &&
-                error.response.status === 400) {
-                throw new ManifestNotFoundException(`Manifest not found for digest ${digest}`);
-            }
-            else {
-                throw error;
-            }
-        }
-    }
-    getManifest(key) {
-        return this.manifests.get(key);
+        // Retrieve the manifest.
+        const response = await this.axios.get(`/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`);
+        const manifest = parseManifest(JSON.stringify(response?.data));
+        return manifest;
     }
     /**
      * Puts the manifest for a given tag in the registry.
@@ -45990,7 +46095,7 @@ class GithubPackageRepo {
             try {
                 // Try to put the manifest without token.
                 const response = await auth.put(`https://ghcr.io/v2/${this.config.owner}/${this.config.package}/manifests/${tag}`, manifest, config);
-                core.info(`New digest: ${response.headers['docker-content-digest']}`);
+                core.debug(`New digest: ${response.headers['docker-content-digest']}`);
             }
             catch (error) {
                 if (axios_isAxiosError(error) && error.response?.status === 401) {
@@ -46001,7 +46106,7 @@ class GithubPackageRepo {
                             Authorization: `Bearer ${token}`
                         }
                     });
-                    core.info(`New digest: ${response.headers['docker-content-digest']}`);
+                    core.debug(`New digest: ${response.headers['docker-content-digest']}`);
                 }
                 else {
                     throw error;
@@ -46012,53 +46117,79 @@ class GithubPackageRepo {
     async deleteTag(tag) {
         // Get the version for the tag.
         const version = this.getVersion(tag);
-        // Get the manifest for the tag.
-        const manifest = this.getManifest(tag);
-        if (!version || !manifest) {
+        if (!version) {
             throw new Error(`Version or manifest not found for tag ${tag}.`);
         }
-        // Clone the manifest.
-        const manifest0 = JSON.parse(JSON.stringify(manifest));
-        // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
-        // Push the manifest with the given tag to the registry. This creates a new version with the
-        // tag and removes it from the original version.
-        if (manifest0.manifests) {
-            // Multi-arch manifest. Remove any pointers to child manifests.
-            manifest0.manifests = [];
+        if (!this.config.dryRun) {
+            // Clone the manifest.
+            const manifest0 = JSON.parse(JSON.stringify(version.manifest));
+            // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
+            // Push the manifest with the given tag to the registry. This creates a new version with the
+            // tag and removes it from the original version.
+            if (manifest0.manifests) {
+                // Multi-arch manifest. Remove any pointers to child manifests.
+                manifest0.manifests = [];
+            }
+            else {
+                // Single-architecture or attestation manifest. Remove any pointers to layers.
+                manifest0.layers = [];
+            }
+            await this.putManifest(tag, manifest0);
         }
-        else {
-            // Single-architecture or attestation manifest. Remove any pointers to layers.
-            manifest0.layers = [];
-        }
-        await this.putManifest(tag, manifest0);
         // Remove the tag from the original version. The original manifest does not need to be adjusted.
         version.metadata.container.tags = version.metadata.container.tags.filter(t => t !== tag);
         // It should not be necessary, but just to remove the tag cleanly at this point, remove it from the internal maps and sets.
         this.tags.delete(tag);
         this.versions.delete(tag);
-        this.manifests.delete(tag);
-        // Fetch the new version for the tag.
-        const fn = (version_, manifest_) => {
-            if (version_.metadata.container.tags.includes(tag)) {
-                this.addVersion(version_, manifest_);
+        if (!this.config.dryRun) {
+            // Fetch the new version for the tag.
+            const fn = (version_) => {
+                if (version_.metadata.container.tags.includes(tag)) {
+                    this.addVersion(version_);
+                }
+            };
+            // Reload the package repository to update the version cache.
+            await this.fetchVersions(fn.bind(this));
+            // Get the new version for the tag.
+            const version0 = this.getVersion(tag);
+            if (version0) {
+                core.debug(JSON.stringify(version0, null, 2));
+                // Delete the temporary version.
+                await this.deleteVersion(tag);
             }
-        };
-        // Reload the package repository to update the version cache.
-        await this.mapVersions(fn.bind(this));
-        // Get the new version for the tag.
-        const version0 = this.getVersion(tag);
-        if (version0) {
-            core.debug(JSON.stringify(version0, null, 2));
-            // Delete the temporary version.
-            await this.deleteVersion(tag);
-        }
-        else {
-            throw new Error(`Intermediate version used to delete tag ${tag} not found.`);
+            else {
+                throw new Error(`Intermediate version used to delete tag ${tag} not found.`);
+            }
         }
     }
 }
 
+;// CONCATENATED MODULE: ./src/tree.ts
+function renderTree(root, getChildren, renderNode) {
+    function renderSubtree(node, thisPrefix, nextPrefix) {
+        // Render the current node
+        renderNode(node, thisPrefix);
+        // Get children of the current node
+        const children = getChildren(node);
+        if (children) {
+            // Iterate through children
+            for (let i = 0; i < children.length; i++) {
+                const child = children[i];
+                const isLastChild = i === children.length - 1;
+                // Prepare the prefix for the child
+                const childPrefix = nextPrefix + (isLastChild ? ' └─' : ' ├─');
+                const childNextPrefix = nextPrefix + (isLastChild ? '   ' : ' │ ');
+                // Recursively render the child's subtree
+                renderSubtree(child, childPrefix, childNextPrefix);
+            }
+        }
+    }
+    // Start rendering from the root
+    renderSubtree(root, '', '');
+}
+
 ;// CONCATENATED MODULE: ./src/main.ts
+
 
 
 
@@ -46078,19 +46209,52 @@ async function run() {
     }
 }
 class CleanupAction {
+    VersionSet = class {
+        tags = [];
+        versions = [];
+        parent;
+        constructor(parent) {
+            this.parent = parent;
+        }
+        addVersions(versions) {
+            // Ensure that version is an array.
+            const versions0 = Symbol.iterator in versions ? versions : [versions];
+            for (const v of versions0) {
+                // Add the version to the list.
+                if (!this.versions.includes(v))
+                    this.versions.push(v);
+                // Add each tag to the list of tags as well.
+                for (const t of v.metadata.container.tags) {
+                    if (!this.tags.includes(t))
+                        this.tags.push(t);
+                }
+            }
+            return this;
+        }
+        addTags(tags) {
+            const tags0 = typeof tags === 'string' ? [tags] : tags;
+            for (const t of tags0) {
+                if (!this.tags.includes(t)) {
+                    this.tags.push(t);
+                }
+                this.addVersions(this.parent.getClosure(t));
+            }
+            return this;
+        }
+    };
     // Configuration.
     config;
     // Provides access to the package repository.
-    githubPackageRepo;
+    repo;
     constructor() {
         // Get action configuration.
         this.config = getConfig();
         // Initialize registry and package repository.
-        this.githubPackageRepo = new GithubPackageRepo(this.config);
+        this.repo = new GithubPackageRepo(this.config);
     }
     async init() {
         // Initialize the package repository.
-        await this.githubPackageRepo.init();
+        await this.repo.init();
     }
     /**
      * Filters the given array of items based on a regular expression.
@@ -46104,103 +46268,11 @@ class CleanupAction {
     matchItems(regexStr, items) {
         // The result.
         let result = [];
-        if (regexStr) {
-            // Compile regular expression.
-            const regex = new RegExp(regexStr);
-            // Filter items based on regular expression.
-            result = items.filter(item => regex.test(item));
-            // Log items that match the regular expression.
-            if (result.length > 0) {
-                core.info(`Items that match regular expression ${regexStr}:`);
-                for (const item of result) {
-                    core.info(`- ${item}`);
-                }
-            }
-            else {
-                core.info(`No items that match regular expression ${regexStr}.`);
-            }
-        }
-        else {
-            // Regular expression undefined.
-            core.info('Option not set.');
-        }
+        // Compile regular expression.
+        const regex = new RegExp(regexStr);
+        // Filter items based on regular expression.
+        result = items.filter(item => regex.test(item));
         return result;
-    }
-    isMultiArch(manifest) {
-        return (manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
-            manifest.mediaType ===
-                'application/vnd.docker.distribution.manifest.list.v2+json');
-    }
-    /**
-     * Returns the digests of all versions recursively reachable from the given tags.
-     *
-     * @param tags - The tags to determine the reachable versions for.
-     * @returns The set of reachable digests.
-     */
-    async getReachableDigestsForTags(tags) {
-        // The result.
-        const result = new Set();
-        // Loop over all tags.
-        for (const tag of tags) {
-            core.startGroup(`Determine reachable versions for tag ${tag}.`);
-            // Get the version for the tag.
-            const version = this.githubPackageRepo.getVersion(tag);
-            if (version) {
-                // Starting with the version's digest, recursively determine all reachable versions.
-                const reachable = await this.getReachableDigestsForDigest(version.name);
-                // Add all reachable versions to the result.
-                for (const child of reachable) {
-                    result.add(child);
-                }
-            }
-            core.endGroup();
-        }
-        return Array.from(result);
-    }
-    /**
-     * Returns the digests of all versions recursively reachable from the given digests.
-     *
-     * @param digests - The digests to determine the reachable versions for.
-     * @returns The set of reachable digests.
-     */
-    async getReachableDigestsForDigests(digests) {
-        // The result.
-        const result = new Set();
-        // Loop over all digests.
-        for (const digest of digests) {
-            core.startGroup(`Determine reachable versions for digest ${digest}.`);
-            // Starting with the version's digest, recursively determine all reachable versions.
-            const reachable = await this.getReachableDigestsForDigest(digest);
-            // Add all reachable versions to the result.
-            for (const child of reachable) {
-                result.add(child);
-            }
-            core.endGroup();
-        }
-        return Array.from(result);
-    }
-    // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
-    async getManifest(digest) {
-        try {
-            core.debug(`Getting manifest for digest ${digest}.`);
-            // Get the manifest for the digest. May throw an exception.
-            const manifest = this.githubPackageRepo.getManifest(digest);
-            core.debug(`Manifest for digest ${digest}:`);
-            core.debug(JSON.stringify(manifest, null, 2));
-            return manifest;
-        }
-        catch (error) {
-            // Handle exception.
-            if (error instanceof ManifestNotFoundException) {
-                // Manifest not found. Log error and return null.
-                core.error(`Manifest for digest ${digest} not found in repository. Skipping.`);
-                return null;
-            }
-            else {
-                // Re-throw other errors.
-                throw error;
-            }
-        }
     }
     /**
      * Retrieves the digests reachable from a given digest.
@@ -46210,51 +46282,28 @@ class CleanupAction {
      * @param digest - The digest for which to retrieve the reachable digests.
      * @returns The set of digests of reachable digests.
      */
-    async getReachableDigestsForDigest(digest) {
+    getClosure(key) {
+        // Convert key to an array.
+        const keys = typeof key === 'string' ? [key] : key;
         // The result.
         const result = [];
-        // Get the manifest for the given digest.
-        const manifest = await this.getManifest(digest);
-        if (!manifest) {
-            // Manifest not found. Return empty set.
-            return result;
-        }
-        // Add the cgiven digest to the result, since it points to an existing manifest.
-        result.push(digest);
-        // Check the media type of the manifest.
-        if (this.isMultiArch(manifest)) {
-            // Manifest list, i.e. a multi-architecture image pointing to multiple child manifests.
-            core.info(`- ${digest}: manifest list`);
-            // Recursively get all reachable versions for each child manifest.
-            // Note: Exceptions will not be caught here if errors occur for any child. This is
-            // to prevent making inconsistent changes later. THe only error case that is handled
-            // is when a manifest is not found, in which case the child is skipped; see above.
-            for (const child of manifest.manifests) {
+        // Loop over all keys.
+        for (const key0 of keys) {
+            // Get the version for the given key.
+            const version = this.repo.getVersion(key0);
+            if (!version)
+                continue;
+            // Add the digest of the version to the result.
+            result.push(version);
+            // Recursively get all reachable versions.
+            for (const child of version.children) {
                 // Get reachable versions for current child.
-                const reachable = await this.getReachableDigestsForDigest(child.digest);
+                const reachable = this.getClosure(child.name);
                 // Add all reachable versions to result.
                 for (const i of reachable) {
                     result.push(i);
                 }
             }
-        }
-        else if (manifest.mediaType === 'application/vnd.oci.image.manifest.v1+json' ||
-            manifest.mediaType ===
-                'application/vnd.docker.distribution.manifest.v2+json') {
-            // Image manifest. Can be a single-architecture image or an attestation.
-            if (manifest.layers.length === 1 &&
-                manifest.layers[0].mediaType === 'application/vnd.in-toto+json') {
-                // Attestation.
-                core.info(`- ${digest}: attestation manifest`);
-            }
-            else {
-                // Single-architecture image.
-                core.info(`- ${digest}: image manifest`);
-            }
-        }
-        else {
-            // Unknown media type.
-            core.warning(`- ${digest}: unknown manifest type ${manifest.mediaType}`);
         }
         return result;
     }
@@ -46274,16 +46323,16 @@ class CleanupAction {
             core.startGroup('Load package versions.');
             core.info(`Loading package versions for ${this.config.owner}/${this.config.package}.`);
             // Load versions.
-            await this.githubPackageRepo.loadVersions();
+            await this.repo.loadVersions();
             // Log total number of version retrieved.
-            const digests = this.githubPackageRepo.getDigests();
-            for (const digest of digests) {
-                const version = this.githubPackageRepo.getVersion(digest);
-                if (version) {
-                    core.debug(`- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`);
+            {
+                const roots = this.repo.getRoots();
+                for (const r of roots) {
+                    renderTree(r, v => v.children, (v, prefix) => {
+                        core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`);
+                    });
                 }
             }
-            core.info(`Retrieved ${digests.length} versions.`);
             core.endGroup();
             // The logic to determine the tags and versions to delete is as follows:
             //
@@ -46323,124 +46372,152 @@ class CleanupAction {
             // The final set of tags to delete is (A_tag v D_tag) \ (B_tag v C_tag) = (A_tag \ B_tag) v D_tag, as per definition.
             //
             // The final set of version digests to delete is (A_digest v F_digest) \ (B_digest v C_digest v E_digest) = (A_digest \ (B_digest v C_digest)) v F_digest, as per definition.
-            // 1. Determine A_tags.
             core.startGroup('Determine tags to delete.');
-            const a_tag = this.matchItems(this.config.includeTags, this.githubPackageRepo.getTags());
+            // The tags and versions to delete.
+            const remove = new this.VersionSet(this);
+            if (this.config.includeTags) {
+                const tags = this.matchItems(this.config.includeTags, this.repo.getTags());
+                remove.addTags(tags);
+                // Log tags that match the regular expression.
+                if (tags.length > 0) {
+                    for (const item of tags) {
+                        core.info(`- ${item}`);
+                    }
+                }
+                else {
+                    core.info(`No tags match the regular expression ${this.config.includeTags}.`);
+                }
+            }
+            else {
+                core.info('Option not set.');
+            }
             core.endGroup();
-            // 2. Determine A_digest.
-            const a_digest = await this.getReachableDigestsForTags(a_tag);
-            // 3. B_tags.
             core.startGroup('Determine tags to exclude.');
-            const b_tag = this.matchItems(this.config.excludeTags, this.githubPackageRepo.getTags());
+            // The tags and versions to keep.
+            const keep = new this.VersionSet(this);
+            if (this.config.excludeTags) {
+                const tags = this.matchItems(this.config.excludeTags, this.repo.getTags());
+                keep.addTags(tags);
+                // Log tags that match the regular expression.
+                if (tags.length > 0) {
+                    for (const item of tags) {
+                        core.info(`- ${item}`);
+                    }
+                }
+                else {
+                    core.info(`No tags match the regular expression ${this.config.excludeTags}.`);
+                }
+            }
+            else {
+                core.info('Option not set.');
+            }
             core.endGroup();
-            // 4. Determine B_digest.
-            const b_digest = await this.getReachableDigestsForTags(b_tag);
             core.startGroup('Determine most recent remaining tags to keep.');
-            let c_tag = [];
-            let c_digest = [];
-            let d_tag = [];
-            let d_digest = [];
-            const tagsRest = this.githubPackageRepo
+            const tagsRest = this.repo
                 .getTags()
-                .filter(tag => !a_tag.includes(tag))
-                .filter(tag => !b_tag.includes(tag))
-                .sort((a, b) => {
-                return (Date.parse(this.githubPackageRepo.getVersion(b)?.updated_at ??
-                    '1970-01-01T00:00:00Z') -
-                    Date.parse(this.githubPackageRepo.getVersion(a)?.updated_at ??
-                        '1970-01-01T00:00:00Z'));
+                .filter(tag => !remove.tags.includes(tag) && !keep.tags.includes(tag))
+                .sort((x, y) => {
+                return (Date.parse(this.repo.getVersion(y)?.updated_at ?? '1970-01-01T00:00:00Z') -
+                    Date.parse(this.repo.getVersion(x)?.updated_at ?? '1970-01-01T00:00:00Z'));
             });
-            // 5. Determine C_tag.
-            c_tag =
-                this.config.keepNtagged != null
-                    ? tagsRest.slice(0, this.config.keepNtagged)
-                    : tagsRest;
-            // 6. Determine C_digest.
-            c_digest = await this.getReachableDigestsForTags(c_tag);
-            // 7. Determine D_tag.
-            d_tag =
-                this.config.keepNtagged != null
-                    ? tagsRest.slice(this.config.keepNtagged)
-                    : [];
-            // 8. Determine D_digest.
-            d_digest = await this.getReachableDigestsForTags(d_tag);
-            core.info(`Most recent ${this.config.keepNtagged} tags to keep`);
-            this.logItems(c_tag);
-            core.info('Remaining tags to delete: ');
-            this.logItems(d_tag);
+            // Determine the most recent tags to keep.
+            const c_tags = this.config.keepNtagged != null
+                ? tagsRest.slice(0, this.config.keepNtagged)
+                : tagsRest;
+            if (this.config.keepNtagged == null) {
+                core.info('Option not set. All remaining tags will be kept:');
+            }
+            else {
+                core.info(`Keeping the most recent ${this.config.keepNtagged} remaining tags:`);
+            }
+            if (c_tags.length === 0) {
+                core.info('  none');
+            }
+            else {
+                for (const t of c_tags)
+                    core.info(`- ${t}`);
+            }
+            keep.addTags(c_tags);
+            // Determine the remaining tags to delete.
+            const d_tags = this.config.keepNtagged != null
+                ? tagsRest.slice(this.config.keepNtagged)
+                : [];
+            remove.addTags(d_tags);
             core.endGroup();
             core.startGroup('Determine most recent remaining untagged images to keep.');
-            let e_digest = [];
-            let f_digest = [];
             // Determine the ordered list of all versions that are neither in A or B.
-            const imagesRest = this.githubPackageRepo
-                .getDigests()
-                .filter(digest => !a_digest.includes(digest))
-                .filter(digest => !b_digest.includes(digest))
-                .filter(digest => !c_digest.includes(digest))
-                .filter(digest => !d_digest.includes(digest))
-                .sort((a, b) => {
-                const aVersion = this.githubPackageRepo.getVersion(a);
-                const bVersion = this.githubPackageRepo.getVersion(b);
-                return (Date.parse(bVersion?.updated_at ?? '1970-01-01T00:00:00Z') -
-                    Date.parse(aVersion?.updated_at ?? '1970-01-01T00:00:00Z'));
+            const imagesRest = this.repo
+                .getVersions()
+                .filter(v => !remove.versions.includes(v))
+                .filter(v => !keep.versions.includes(v))
+                .filter(v => !v.is_attestation)
+                .sort((x, y) => {
+                return (Date.parse(y?.updated_at ?? '1970-01-01T00:00:00Z') -
+                    Date.parse(x?.updated_at ?? '1970-01-01T00:00:00Z'));
             });
-            core.info('Remaining digests to consider:');
-            this.logItems(imagesRest);
             // 8. Determine E_digest.
-            const e_digest0 = this.config.keepNuntagged != null
+            const e_versions0 = this.config.keepNuntagged != null
                 ? imagesRest.slice(0, this.config.keepNuntagged)
                 : imagesRest;
             // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
-            e_digest = [];
-            for (const digest of e_digest0) {
-                const reachable = await this.getReachableDigestsForDigest(digest);
+            const e_versions = [];
+            for (const v of e_versions0) {
+                const reachable = this.getClosure(v.name);
                 for (const child of reachable) {
                     // Avoid duplicates.
-                    if (!e_digest.includes(child))
-                        e_digest.push(child);
+                    if (!e_versions.includes(child))
+                        e_versions.push(child);
                 }
                 if (this.config.keepNuntagged != null &&
-                    e_digest.length >= this.config.keepNuntagged) {
+                    e_versions.length >= this.config.keepNuntagged) {
                     break;
                 }
             }
-            // 9. Determine F_digest as imagesRest with images in E_digest removed.
-            f_digest = imagesRest.filter(digest => !e_digest.includes(digest));
-            core.info(`Most recent ${this.config.keepNuntagged} untagged images to keep:`);
-            this.logItems(e_digest);
-            core.info('Remaining untagged images to delete:');
-            this.logItems(f_digest);
+            if (this.config.keepNuntagged == null) {
+                core.info('Option not set. All remaining untagged images will be kept.');
+            }
+            else {
+                core.info(`Keeping the most recent ${this.config.keepNuntagged} remaining untagged images:`);
+            }
+            if (e_versions.length === 0) {
+                core.info('  none');
+            }
+            else {
+                for (const v of e_versions)
+                    core.info(`- ${v}`);
+            }
+            keep.addVersions(e_versions);
+            const f_versions = imagesRest.filter(v => !e_versions.includes(v));
+            remove.addVersions(f_versions);
             core.endGroup();
-            core.startGroup('Determine final set of tags to delete.');
-            const tagsDelete = a_tag.filter(tag => !b_tag.includes(tag)).concat(d_tag);
+            core.startGroup('Final set of tags to delete.');
+            const tagsDelete = remove.tags.filter(tag => !keep.tags.includes(tag));
             this.logItems(tagsDelete);
             core.endGroup();
-            core.startGroup('Determine final set of versions to delete.');
-            const digestsDelete = a_digest
-                .concat(d_digest)
-                .concat(f_digest)
-                .filter(digest => !b_digest.includes(digest) &&
-                !c_digest.includes(digest) &&
-                !e_digest.includes(digest));
-            this.logItems(digestsDelete);
+            core.startGroup('Final set of versions to delete.');
+            const versionsDelete = remove.versions.filter(v => !keep.versions.includes(v));
+            {
+                const roots = scanRoots(new Set(versionsDelete), key => this.repo.getVersion(key));
+                for (const r of roots) {
+                    renderTree(r, v => v.children, (v, prefix) => {
+                        core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`);
+                    });
+                }
+            }
+            //this.logItems(versionsDelete)
             core.endGroup();
-            // Delete the tags.
+            core.startGroup('Delete tags.');
             for (const tag of tagsDelete) {
                 core.info(`Deleting tag ${tag}.`);
-                await this.githubPackageRepo.deleteTag(tag);
+                await this.repo.deleteTag(tag);
             }
-            // Delete the versions.
-            for (const digest of digestsDelete) {
-                const version = this.githubPackageRepo.getVersion(digest);
-                if (version) {
-                    core.info(`Deleting version with digest=${version.name}, id=${version.id}.`);
-                    await this.githubPackageRepo.deleteVersion(version.id);
-                }
-                else {
-                    core.info(`Version with digest ${digest} not found.`);
-                }
+            core.endGroup();
+            core.startGroup('Delete versions.');
+            for (const v of versionsDelete) {
+                core.info(`Deleting version ${v}.`);
+                await this.repo.deleteVersion(v.id);
             }
+            core.endGroup();
         }
         catch (error) {
             // Fail the workflow run if an error occurs

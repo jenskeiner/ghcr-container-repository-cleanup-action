@@ -2,12 +2,13 @@ import * as core from '@actions/core'
 import AjvModule from 'ajv/dist/jtd.js'
 import { manifestSchema, packageVersionSchema } from './schemas.js'
 import {
-  ManifestSchemaInterface,
+  Manifest,
   OCIImageIndexModel,
   OCIImageManifestModel,
   DockerImageManifestModel,
   DockerManifestListModel,
   PackageVersionModel,
+  PackageVersionExt,
   PackageVersion
 } from './models.js'
 
@@ -23,7 +24,7 @@ export function parseManifest(
   | OCIImageManifestModel
   | DockerImageManifestModel
   | DockerManifestListModel {
-  const data = parseManifest0(jsonString) as ManifestSchemaInterface
+  const data = parseManifest0(jsonString) as Manifest
 
   if (data === undefined) {
     core.info(`${parseManifest0.position}`)
@@ -48,7 +49,7 @@ export function parseManifest(
 
 const parsePackageVersion0 = ajv.compileParser(packageVersionSchema)
 
-export function parsePackageVersion(jsonString: string): PackageVersionModel {
+export function parsePackageVersion(jsonString: string): PackageVersionExt {
   const data = parsePackageVersion0(jsonString) as PackageVersion
 
   if (data === undefined) {
