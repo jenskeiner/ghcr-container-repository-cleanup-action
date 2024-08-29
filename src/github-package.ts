@@ -11,7 +11,7 @@ import {
   DockerImageManifestModel,
   DockerManifestListModel,
   ManifestSchemaInterface,
-  PackageVersion
+  PackageVersionExt
 } from './models.js'
 
 export class ManifestNotFoundException extends Error {
@@ -32,7 +32,7 @@ export class GithubPackageRepo {
   repoType = 'Organization'
 
   // Maps digest or tag to version.
-  versions = new Map<string | number, PackageVersion>()
+  versions = new Map<string | number, PackageVersionExt>()
 
   // Maps digest, tag, or id to manifest.
   manifests = new Map<string | number, ManifestSchemaInterface | undefined>()
@@ -138,7 +138,7 @@ export class GithubPackageRepo {
    */
   private async mapVersions(
     fn: (
-      version: PackageVersion,
+      version: PackageVersionExt,
       manifest: ManifestSchemaInterface | undefined
     ) => void
   ): Promise<void> {
@@ -207,7 +207,7 @@ export class GithubPackageRepo {
   }
 
   private addVersion(
-    version: PackageVersion,
+    version: PackageVersionExt,
     manifest: ManifestSchemaInterface | undefined
   ): void {
     this.versions.set(version.name, version)
@@ -225,6 +225,27 @@ export class GithubPackageRepo {
     }
   }
 
+  private checkAttestations(): void {
+    for (const digest of this.getDigests()) {
+      const version = this.versions.get(digest)
+
+      if (version) {
+        // Determine the tag of an attestation image that may exist. The tag is just the digest of this version where : is replaced with -.
+        const attestationTag = version.name.replace(':', '-')
+
+        // Get the attestation image version.
+        const attestationVersion = this.getVersion(attestationTag)
+
+        if (attestationVersion) {
+          attestationVersion.is_attestation_for = version
+          core.info(
+            `Version ${attestationVersion.name} is an attestation for ${version.name}.`
+          )
+        }
+      }
+    }
+  }
+
   async loadVersions(): Promise<void> {
     // Clear the internal maps.
     this.versions.clear()
@@ -232,7 +253,10 @@ export class GithubPackageRepo {
     this.tags.clear()
     this.digests.clear()
 
-    return this.mapVersions(this.addVersion.bind(this))
+    await this.mapVersions(this.addVersion.bind(this))
+    this.checkAttestations()
+
+    return Promise.resolve()
   }
 
   /**
@@ -251,12 +275,24 @@ export class GithubPackageRepo {
     return Array.from(this.tags)
   }
 
+  getTagsWithoutAttestations(): string[] {
+    return Array.from(this.tags).filter(
+      tag => !this.getVersion(tag)?.is_attestation_for
+    )
+  }
+
+  getAttestationTags(): string[] {
+    return Array.from(this.tags).filter(
+      tag => this.getVersion(tag)?.is_attestation_for
+    )
+  }
+
   /**
    * Return the package version for a tag.
    * @param tag The tag to search for.
    * @returns The package version for the tag.
    */
-  getVersion(key: string | number): PackageVersion | undefined {
+  getVersion(key: string | number): PackageVersionExt | undefined {
     return this.versions.get(key)
   }
 
@@ -449,7 +485,7 @@ export class GithubPackageRepo {
     // Fetch the new version for the tag.
 
     const fn = (
-      version_: PackageVersion,
+      version_: PackageVersionExt,
       manifest_: ManifestSchemaInterface | undefined
     ): void => {
       if (version_.metadata.container.tags.includes(tag)) {

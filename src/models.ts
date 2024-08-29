@@ -122,7 +122,11 @@ export interface PackageVersion {
   metadata: PackageVersionMetadata
 }
 
-export class PackageVersionModel implements PackageVersion {
+export interface PackageVersionExt extends PackageVersion {
+  is_attestation_for?: PackageVersionExt
+}
+
+export class PackageVersionModel implements PackageVersionExt {
   id = 0
   name = ''
   url = ''
@@ -136,6 +140,7 @@ export class PackageVersionModel implements PackageVersion {
       tags: []
     }
   })
+  is_attestation_for?: PackageVersionExt
 
   constructor(data: PackageVersion) {
     Object.assign(this, data)

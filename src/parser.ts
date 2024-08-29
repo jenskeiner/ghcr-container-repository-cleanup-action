@@ -8,6 +8,7 @@ import {
   DockerImageManifestModel,
   DockerManifestListModel,
   PackageVersionModel,
+  PackageVersionExt,
   PackageVersion
 } from './models.js'
 
@@ -48,7 +49,7 @@ export function parseManifest(
 
 const parsePackageVersion0 = ajv.compileParser(packageVersionSchema)
 
-export function parsePackageVersion(jsonString: string): PackageVersionModel {
+export function parsePackageVersion(jsonString: string): PackageVersionExt {
   const data = parsePackageVersion0(jsonString) as PackageVersion
 
   if (data === undefined) {

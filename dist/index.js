@@ -45660,6 +45660,7 @@ class PackageVersionModel {
             tags: []
         }
     });
+    is_attestation_for;
     constructor(data) {
         Object.assign(this, data);
     }
@@ -45885,13 +45886,30 @@ class GithubPackageRepo {
             this.manifests.set(tag, manifest);
         }
     }
+    checkAttestations() {
+        for (const digest of this.getDigests()) {
+            const version = this.versions.get(digest);
+            if (version) {
+                // Determine the tag of an attestation image that may exist. The tag is just the digest of this version where : is replaced with -.
+                const attestationTag = version.name.replace(':', '-');
+                // Get the attestation image version.
+                const attestationVersion = this.getVersion(attestationTag);
+                if (attestationVersion) {
+                    attestationVersion.is_attestation_for = version;
+                    core.info(`Version ${attestationVersion.name} is an attestation for ${version.name}.`);
+                }
+            }
+        }
+    }
     async loadVersions() {
         // Clear the internal maps.
         this.versions.clear();
         this.manifests.clear();
         this.tags.clear();
         this.digests.clear();
-        return this.mapVersions(this.addVersion.bind(this));
+        await this.mapVersions(this.addVersion.bind(this));
+        this.checkAttestations();
+        return Promise.resolve();
     }
     /**
      Return the digests for the package.
@@ -45906,6 +45924,12 @@ class GithubPackageRepo {
      */
     getTags() {
         return Array.from(this.tags);
+    }
+    getTagsWithoutAttestations() {
+        return Array.from(this.tags).filter(tag => !this.getVersion(tag)?.is_attestation_for);
+    }
+    getAttestationTags() {
+        return Array.from(this.tags).filter(tag => this.getVersion(tag)?.is_attestation_for);
     }
     /**
      * Return the package version for a tag.
@@ -46278,21 +46302,20 @@ class CleanupAction {
             // Single-architecture image.
             core.info(`- ${key}: image manifest`);
         }
-        // Check if there's a GitHub attestation for this version. There is no direct link from the version to the attestation.
-        // Instead, the attestation image is tagged with the version digest.
-        // Get the attestation image tag by taking version.name and replacing : with -.
-        const attestationTag = version.name.replace(':', '-');
-        // Get the attestation image version.
-        const attestationVersion = this.githubPackageRepo.getVersion(attestationTag);
-        if (attestationVersion) {
-            core.info(`Found attestation image for ${key}: ${JSON.stringify(attestationVersion)}.`);
-            // Get reachable versions for the attestation image.
-            const reachable = await this.getReachableVersions(attestationVersion.name);
-            // Add all reachable versions to result.
-            for (const i of reachable) {
-                result.push(i);
-            }
-        }
+        // // Check if there's a GitHub attestation for this version. There is no direct link from the version to the attestation.
+        // // Instead, the attestation image is tagged with the version digest.
+        // // Get the attestation image tag by taking version.name and replacing : with -.
+        // const attestationTag = version.name.replace(':', '-')
+        // // Get the attestation image version.
+        // const attestationVersion = this.githubPackageRepo.getVersion(attestationTag)
+        // if (attestationVersion) {
+        //   // Get reachable versions for the attestation image.
+        //   const reachable = await this.getReachableVersions(attestationVersion.name)
+        //   // Add all reachable versions to result.
+        //   for (const i of reachable) {
+        //     result.push(i)
+        //   }
+        // }
         return result;
     }
     logItems(items) {
@@ -46362,13 +46385,13 @@ class CleanupAction {
             // The final set of version digests to delete is (A_digest v F_digest) \ (B_digest v C_digest v E_digest) = (A_digest \ (B_digest v C_digest)) v F_digest, as per definition.
             // 1. Determine A_tags.
             core.startGroup('Determine tags to delete.');
-            const a_tag = this.matchItems(this.config.includeTags, this.githubPackageRepo.getTags());
+            const a_tag = this.matchItems(this.config.includeTags, this.githubPackageRepo.getTagsWithoutAttestations());
             core.endGroup();
             // 2. Determine A_digest.
             const a_digest = await this.getReachableDigestsForTags(a_tag);
             // 3. B_tags.
             core.startGroup('Determine tags to exclude.');
-            const b_tag = this.matchItems(this.config.excludeTags, this.githubPackageRepo.getTags());
+            const b_tag = this.matchItems(this.config.excludeTags, this.githubPackageRepo.getTagsWithoutAttestations());
             core.endGroup();
             // 4. Determine B_digest.
             const b_digest = await this.getReachableDigestsForTags(b_tag);
@@ -46378,7 +46401,7 @@ class CleanupAction {
             let d_tag = [];
             let d_digest = [];
             const tagsRest = this.githubPackageRepo
-                .getTags()
+                .getTagsWithoutAttestations()
                 .filter(tag => !a_tag.includes(tag))
                 .filter(tag => !b_tag.includes(tag))
                 .sort((a, b) => {
@@ -46406,9 +46429,54 @@ class CleanupAction {
             core.info('Remaining tags to delete: ');
             this.logItems(d_tag);
             core.endGroup();
+            const attestations = new Map();
+            const allAttestationDigests = [];
+            for (const attestationTag of this.githubPackageRepo.getAttestationTags()) {
+                const reachable = await this.getReachableVersions(attestationTag);
+                attestations.set(attestationTag, reachable);
+                for (const digest of reachable) {
+                    if (!allAttestationDigests.includes(digest)) {
+                        allAttestationDigests.push(digest);
+                    }
+                }
+            }
+            for (const [attestationTag, attestationDigests] of attestations) {
+                const attestationVersion = this.githubPackageRepo.getVersion(attestationTag);
+                if (attestationVersion) {
+                    const targetVersion = attestationVersion?.is_attestation_for;
+                    if (targetVersion) {
+                        for (const x of [
+                            [a_tag, a_digest],
+                            [b_tag, b_digest],
+                            [c_tag, c_digest],
+                            [d_tag, d_digest]
+                        ]) {
+                            const [tags0, digests0] = x;
+                            if (digests0.includes(targetVersion.name)) {
+                                // Add the attestation tag to tags.
+                                core.info(`Adding attestation tag that refers to ${targetVersion.name}.`);
+                                if (!tags0.includes(attestationTag)) {
+                                    core.info(`- ${attestationTag}`);
+                                    tags0.push(attestationTag);
+                                }
+                                // Add all digests in attestationDigests to digests.
+                                core.info(`Adding all attestation digests that refer to ${targetVersion.name}.`);
+                                for (const digest of attestationDigests) {
+                                    if (!digests0.includes(digest)) {
+                                        core.info(`- ${digest}`);
+                                        digests0.push(digest);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             core.startGroup('Determine most recent remaining untagged images to keep.');
             let e_digest = [];
             let f_digest = [];
+            const e_tag = [];
+            const f_tag = [];
             // Determine the ordered list of all versions that are neither in A or B.
             const imagesRest = this.githubPackageRepo
                 .getDigests()
@@ -46416,6 +46484,7 @@ class CleanupAction {
                 .filter(digest => !b_digest.includes(digest))
                 .filter(digest => !c_digest.includes(digest))
                 .filter(digest => !d_digest.includes(digest))
+                .filter(digest => !allAttestationDigests.includes(digest))
                 .sort((a, b) => {
                 const aVersion = this.githubPackageRepo.getVersion(a);
                 const bVersion = this.githubPackageRepo.getVersion(b);
@@ -46442,15 +46511,48 @@ class CleanupAction {
                     break;
                 }
             }
-            // 9. Determine F_digest as imagesRest with images in E_digest removed.
-            f_digest = imagesRest.filter(digest => !e_digest.includes(digest));
             core.info(`Most recent ${this.config.keepNuntagged} untagged images to keep:`);
             this.logItems(e_digest);
             core.info('Remaining untagged images to delete:');
             this.logItems(f_digest);
             core.endGroup();
+            // 9. Determine F_digest as imagesRest with images in E_digest removed.
+            f_digest = imagesRest.filter(digest => !e_digest.includes(digest));
+            for (const [attestationTag, attestationDigests] of attestations) {
+                const attestationVersion = this.githubPackageRepo.getVersion(attestationTag);
+                if (attestationVersion) {
+                    const targetVersion = attestationVersion?.is_attestation_for;
+                    if (targetVersion) {
+                        for (const x of [
+                            [e_tag, e_digest],
+                            [f_tag, f_digest]
+                        ]) {
+                            const [tags0, digests0] = x;
+                            if (digests0.includes(targetVersion.name)) {
+                                // Add the attestation tag to tags.
+                                core.info(`Adding attestation tag that refers to ${targetVersion.name}.`);
+                                if (!tags0.includes(attestationTag)) {
+                                    core.info(`- ${attestationTag}`);
+                                    tags0.push(attestationTag);
+                                }
+                                // Add all digests in attestationDigests to digests.
+                                core.info(`Adding all attestation digests that refer to ${targetVersion.name}.`);
+                                for (const digest of attestationDigests) {
+                                    if (!digests0.includes(digest)) {
+                                        core.info(`- ${digest}`);
+                                        digests0.push(digest);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             core.startGroup('Determine final set of tags to delete.');
-            const tagsDelete = a_tag.filter(tag => !b_tag.includes(tag)).concat(d_tag);
+            const tagsDelete = a_tag
+                .concat(d_tag)
+                .concat(f_tag)
+                .filter(tag => !b_tag.includes(tag) && !c_tag.includes(tag) && !e_tag.includes(tag));
             this.logItems(tagsDelete);
             core.endGroup();
             core.startGroup('Determine final set of versions to delete.');

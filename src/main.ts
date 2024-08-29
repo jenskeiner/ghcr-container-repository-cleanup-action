@@ -222,26 +222,23 @@ class CleanupAction {
       core.info(`- ${key}: image manifest`)
     }
 
-    // Check if there's a GitHub attestation for this version. There is no direct link from the version to the attestation.
-    // Instead, the attestation image is tagged with the version digest.
+    // // Check if there's a GitHub attestation for this version. There is no direct link from the version to the attestation.
+    // // Instead, the attestation image is tagged with the version digest.
 
-    // Get the attestation image tag by taking version.name and replacing : with -.
-    const attestationTag = version.name.replace(':', '-')
+    // // Get the attestation image tag by taking version.name and replacing : with -.
+    // const attestationTag = version.name.replace(':', '-')
 
-    // Get the attestation image version.
-    const attestationVersion = this.githubPackageRepo.getVersion(attestationTag)
+    // // Get the attestation image version.
+    // const attestationVersion = this.githubPackageRepo.getVersion(attestationTag)
 
-    if (attestationVersion) {
-      core.info(
-        `Found attestation image for ${key}: ${JSON.stringify(attestationVersion)}.`
-      )
-      // Get reachable versions for the attestation image.
-      const reachable = await this.getReachableVersions(attestationVersion.name)
-      // Add all reachable versions to result.
-      for (const i of reachable) {
-        result.push(i)
-      }
-    }
+    // if (attestationVersion) {
+    //   // Get reachable versions for the attestation image.
+    //   const reachable = await this.getReachableVersions(attestationVersion.name)
+    //   // Add all reachable versions to result.
+    //   for (const i of reachable) {
+    //     result.push(i)
+    //   }
+    // }
 
     return result
   }
@@ -324,7 +321,7 @@ class CleanupAction {
       core.startGroup('Determine tags to delete.')
       const a_tag = this.matchItems(
         this.config.includeTags,
-        this.githubPackageRepo.getTags()
+        this.githubPackageRepo.getTagsWithoutAttestations()
       )
       core.endGroup()
 
@@ -335,7 +332,7 @@ class CleanupAction {
       core.startGroup('Determine tags to exclude.')
       const b_tag = this.matchItems(
         this.config.excludeTags,
-        this.githubPackageRepo.getTags()
+        this.githubPackageRepo.getTagsWithoutAttestations()
       )
       core.endGroup()
 
@@ -349,7 +346,7 @@ class CleanupAction {
       let d_digest: string[] = []
 
       const tagsRest: string[] = this.githubPackageRepo
-        .getTags()
+        .getTagsWithoutAttestations()
         .filter(tag => !a_tag.includes(tag))
         .filter(tag => !b_tag.includes(tag))
         .sort((a: string, b: string) => {
@@ -390,11 +387,64 @@ class CleanupAction {
 
       core.endGroup()
 
+      const attestations: Map<string, string[]> = new Map()
+      const allAttestationDigests: string[] = []
+      for (const attestationTag of this.githubPackageRepo.getAttestationTags()) {
+        const reachable = await this.getReachableVersions(attestationTag)
+        attestations.set(attestationTag, reachable)
+        for (const digest of reachable) {
+          if (!allAttestationDigests.includes(digest)) {
+            allAttestationDigests.push(digest)
+          }
+        }
+      }
+
+      for (const [attestationTag, attestationDigests] of attestations) {
+        const attestationVersion =
+          this.githubPackageRepo.getVersion(attestationTag)
+
+        if (attestationVersion) {
+          const targetVersion = attestationVersion?.is_attestation_for
+          if (targetVersion) {
+            for (const x of [
+              [a_tag, a_digest],
+              [b_tag, b_digest],
+              [c_tag, c_digest],
+              [d_tag, d_digest]
+            ]) {
+              const [tags0, digests0] = x
+              if (digests0.includes(targetVersion.name)) {
+                // Add the attestation tag to tags.
+                core.info(
+                  `Adding attestation tag that refers to ${targetVersion.name}.`
+                )
+                if (!tags0.includes(attestationTag)) {
+                  core.info(`- ${attestationTag}`)
+                  tags0.push(attestationTag)
+                }
+                // Add all digests in attestationDigests to digests.
+                core.info(
+                  `Adding all attestation digests that refer to ${targetVersion.name}.`
+                )
+                for (const digest of attestationDigests) {
+                  if (!digests0.includes(digest)) {
+                    core.info(`- ${digest}`)
+                    digests0.push(digest)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       core.startGroup(
         'Determine most recent remaining untagged images to keep.'
       )
       let e_digest: string[] = []
       let f_digest: string[] = []
+      const e_tag: string[] = []
+      const f_tag: string[] = []
 
       // Determine the ordered list of all versions that are neither in A or B.
       const imagesRest: string[] = this.githubPackageRepo
@@ -403,6 +453,7 @@ class CleanupAction {
         .filter(digest => !b_digest.includes(digest))
         .filter(digest => !c_digest.includes(digest))
         .filter(digest => !d_digest.includes(digest))
+        .filter(digest => !allAttestationDigests.includes(digest))
         .sort((a: string, b: string) => {
           const aVersion = this.githubPackageRepo.getVersion(a)
           const bVersion = this.githubPackageRepo.getVersion(b)
@@ -437,9 +488,6 @@ class CleanupAction {
         }
       }
 
-      // 9. Determine F_digest as imagesRest with images in E_digest removed.
-      f_digest = imagesRest.filter(digest => !e_digest.includes(digest))
-
       core.info(
         `Most recent ${this.config.keepNuntagged} untagged images to keep:`
       )
@@ -449,8 +497,54 @@ class CleanupAction {
 
       core.endGroup()
 
+      // 9. Determine F_digest as imagesRest with images in E_digest removed.
+      f_digest = imagesRest.filter(digest => !e_digest.includes(digest))
+
+      for (const [attestationTag, attestationDigests] of attestations) {
+        const attestationVersion =
+          this.githubPackageRepo.getVersion(attestationTag)
+
+        if (attestationVersion) {
+          const targetVersion = attestationVersion?.is_attestation_for
+          if (targetVersion) {
+            for (const x of [
+              [e_tag, e_digest],
+              [f_tag, f_digest]
+            ]) {
+              const [tags0, digests0] = x
+              if (digests0.includes(targetVersion.name)) {
+                // Add the attestation tag to tags.
+                core.info(
+                  `Adding attestation tag that refers to ${targetVersion.name}.`
+                )
+                if (!tags0.includes(attestationTag)) {
+                  core.info(`- ${attestationTag}`)
+                  tags0.push(attestationTag)
+                }
+                // Add all digests in attestationDigests to digests.
+                core.info(
+                  `Adding all attestation digests that refer to ${targetVersion.name}.`
+                )
+                for (const digest of attestationDigests) {
+                  if (!digests0.includes(digest)) {
+                    core.info(`- ${digest}`)
+                    digests0.push(digest)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
       core.startGroup('Determine final set of tags to delete.')
-      const tagsDelete = a_tag.filter(tag => !b_tag.includes(tag)).concat(d_tag)
+      const tagsDelete = a_tag
+        .concat(d_tag)
+        .concat(f_tag)
+        .filter(
+          tag =>
+            !b_tag.includes(tag) && !c_tag.includes(tag) && !e_tag.includes(tag)
+        )
       this.logItems(tagsDelete)
       core.endGroup()
 

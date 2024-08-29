@@ -46656,6 +46656,7 @@ class PackageVersionModel {
             tags: []
         }
     });
+    is_attestation_for;
     constructor(data) {
         Object.assign(this, data);
     }
@@ -46881,13 +46882,30 @@ class GithubPackageRepo {
             this.manifests.set(tag, manifest);
         }
     }
+    checkAttestations() {
+        for (const digest of this.getDigests()) {
+            const version = this.versions.get(digest);
+            if (version) {
+                // Determine the tag of an attestation image that may exist. The tag is just the digest of this version where : is replaced with -.
+                const attestationTag = version.name.replace(':', '-');
+                // Get the attestation image version.
+                const attestationVersion = this.getVersion(attestationTag);
+                if (attestationVersion) {
+                    attestationVersion.is_attestation_for = version;
+                    core.info(`Version ${attestationVersion.name} is an attestation for ${version.name}.`);
+                }
+            }
+        }
+    }
     async loadVersions() {
         // Clear the internal maps.
         this.versions.clear();
         this.manifests.clear();
         this.tags.clear();
         this.digests.clear();
-        return this.mapVersions(this.addVersion.bind(this));
+        await this.mapVersions(this.addVersion.bind(this));
+        this.checkAttestations();
+        return Promise.resolve();
     }
     /**
      Return the digests for the package.
@@ -46902,6 +46920,12 @@ class GithubPackageRepo {
      */
     getTags() {
         return Array.from(this.tags);
+    }
+    getTagsWithoutAttestations() {
+        return Array.from(this.tags).filter(tag => !this.getVersion(tag)?.is_attestation_for);
+    }
+    getAttestationTags() {
+        return Array.from(this.tags).filter(tag => this.getVersion(tag)?.is_attestation_for);
     }
     /**
      * Return the package version for a tag.
