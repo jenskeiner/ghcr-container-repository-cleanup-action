@@ -46587,7 +46587,7 @@ const mediaTypes = (/* unused pure expression or super */ null && ([
     'application/vnd.docker.distribution.manifest.list.v2+json',
     'application/vnd.docker.distribution.manifest.v2+json'
 ]));
-function isMediaType(value) {
+function isValidMediaType(value) {
     return mediaTypes.includes(value);
 }
 var ManifestType;

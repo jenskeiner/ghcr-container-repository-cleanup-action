@@ -5,7 +5,7 @@ const mediaTypes = [
   'application/vnd.docker.distribution.manifest.v2+json'
 ]
 
-export function isMediaType(value: unknown): value is MediaType {
+export function isValidMediaType(value: unknown): value is MediaType {
   return mediaTypes.includes(value as MediaType)
 }
 

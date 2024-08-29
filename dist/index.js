@@ -45591,7 +45591,7 @@ const mediaTypes = [
     'application/vnd.docker.distribution.manifest.list.v2+json',
     'application/vnd.docker.distribution.manifest.v2+json'
 ];
-function isMediaType(value) {
+function isValidMediaType(value) {
     return mediaTypes.includes(value);
 }
 var ManifestType;
@@ -46242,7 +46242,6 @@ class CleanupAction {
             // Manifest not found. Return empty set.
             return result;
         }
-        core.info(`manifest: ${JSON.stringify(manifest)}`);
         // Add the cgiven digest to the result, since it points to an existing manifest.
         result.push(digest);
         // Check the media type of the manifest.
@@ -46255,7 +46254,7 @@ class CleanupAction {
             // is when a manifest is not found, in which case the child is skipped; see above.
             for (const child of manifest.manifests) {
                 const mediaType = child.mediaType;
-                if (isMediaType(mediaType)) {
+                if (isValidMediaType(mediaType)) {
                     // Get reachable versions for current child.
                     const reachable = await this.getReachableDigestsForDigest(child.digest);
                     // Add all reachable versions to result.

@@ -4,7 +4,7 @@ import {
   GithubPackageRepo,
   ManifestNotFoundException
 } from './github-package.js'
-import { isMediaType } from './models.js'
+import { isValidMediaType } from './models.js'
 
 export async function run(): Promise<void> {
   try {
@@ -181,8 +181,6 @@ class CleanupAction {
       return result
     }
 
-    core.info(`manifest: ${JSON.stringify(manifest)}`)
-
     // Add the cgiven digest to the result, since it points to an existing manifest.
     result.push(digest)
 
@@ -197,7 +195,7 @@ class CleanupAction {
       // is when a manifest is not found, in which case the child is skipped; see above.
       for (const child of manifest.manifests) {
         const mediaType = child.mediaType
-        if (isMediaType(mediaType)) {
+        if (isValidMediaType(mediaType)) {
           // Get reachable versions for current child.
           const reachable = await this.getReachableDigestsForDigest(
             child.digest
