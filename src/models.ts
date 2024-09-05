@@ -1,76 +1,70 @@
-export interface ManifestSchemaInterface {
-  mediaType:
-    | 'application/vnd.oci.image.manifest.v1+json'
-    | 'application/vnd.oci.image.index.v1+json'
-    | 'application/vnd.docker.distribution.manifest.list.v2+json'
-    | 'application/vnd.docker.distribution.manifest.v2+json'
+export type MediaType =
+  | 'application/vnd.oci.image.manifest.v1+json'
+  | 'application/vnd.oci.image.index.v1+json'
+  | 'application/vnd.docker.distribution.manifest.list.v2+json'
+  | 'application/vnd.docker.distribution.manifest.v2+json'
+
+export interface ManifestReference {
+  mediaType: string
+  digest: string
 }
 
-export enum ManifestType {
-  SingleArchitecture,
-  MultiArchitecture
+export interface Manifest {
+  mediaType: MediaType
+  manifests?: ManifestReference[]
+  layers?: ManifestReference[]
 }
 
-export interface Manifest extends ManifestSchemaInterface {
-  get type(): ManifestType
+export interface ManifestExt extends Manifest {
+  children: string[]
 }
 
-abstract class BaseSingleArchitectureManifest {
-  get type(): ManifestType {
-    return ManifestType.SingleArchitecture
+abstract class BaseManifest {
+  children: string[]
+
+  constructor(children: string[] = []) {
+    this.children = children
   }
 }
 
-abstract class BaseMultiArchitectureManifest {
-  get type(): ManifestType {
-    return ManifestType.MultiArchitecture
-  }
-}
-
-export class OCIImageManifestModel
-  extends BaseSingleArchitectureManifest
-  implements Manifest
-{
+export class OCIImageManifestModel extends BaseManifest implements ManifestExt {
   mediaType = 'application/vnd.oci.image.manifest.v1+json' as const
 
-  constructor(data: ManifestSchemaInterface) {
+  constructor(data: Manifest) {
     super()
     Object.assign(this, data)
   }
 }
 
-export class OCIImageIndexModel
-  extends BaseMultiArchitectureManifest
-  implements Manifest
-{
+export class OCIImageIndexModel extends BaseManifest implements ManifestExt {
   mediaType = 'application/vnd.oci.image.index.v1+json' as const
 
-  constructor(data: ManifestSchemaInterface) {
-    super()
+  constructor(data: Manifest) {
+    super(data.manifests ? data.manifests.map(manifest => manifest.digest) : [])
     Object.assign(this, data)
   }
 }
 
 export class DockerManifestListModel
-  extends BaseMultiArchitectureManifest
-  implements Manifest
+  extends BaseManifest
+  implements ManifestExt
 {
   mediaType =
     'application/vnd.docker.distribution.manifest.list.v2+json' as const
 
-  constructor(data: ManifestSchemaInterface) {
-    super()
+  constructor(data: Manifest) {
+    super(data.manifests ? data.manifests.map(manifest => manifest.digest) : [])
     Object.assign(this, data)
   }
 }
 
 export class DockerImageManifestModel
-  extends BaseSingleArchitectureManifest
-  implements Manifest
+  extends BaseManifest
+  implements ManifestExt
 {
   mediaType = 'application/vnd.docker.distribution.manifest.v2+json' as const
 
-  constructor(data: ManifestSchemaInterface) {
+  constructor(data: Manifest) {
     super()
     Object.assign(this, data)
   }
@@ -107,7 +101,23 @@ export interface PackageVersion {
   metadata: PackageVersionMetadata
 }
 
-export class PackageVersionModel implements PackageVersion {
+export type PackageVersionType =
+  | 'multi-arch image'
+  | 'single-arch image'
+  | 'attestation root'
+  | 'attestation child'
+  | 'Docker attestation'
+  | 'unknown'
+
+export interface PackageVersionExt extends PackageVersion {
+  get is_attestation(): boolean
+  children: PackageVersionExt[]
+  parent: PackageVersionExt | null
+  type: PackageVersionType
+  manifest: ManifestExt | undefined
+}
+
+export class PackageVersionModel implements PackageVersionExt {
   id = 0
   name = ''
   url = ''
@@ -121,8 +131,20 @@ export class PackageVersionModel implements PackageVersion {
       tags: []
     }
   })
+  children: PackageVersionExt[] = []
+  parent: PackageVersionExt | null = null
+  type: PackageVersionType = 'unknown'
+  manifest: ManifestExt | undefined = undefined
 
   constructor(data: PackageVersion) {
     Object.assign(this, data)
+  }
+
+  get is_attestation(): boolean {
+    return this.type === 'attestation root' || this.type === 'attestation child'
+  }
+
+  toString(): string {
+    return `{type=${this.type}, id=${this.id}, tags=${this.metadata.container.tags}}`
   }
 }

@@ -404,7 +404,7 @@ export async function run(): Promise<void> {
       }
 
       const tags = new Set<string>()
-      for (const tag of githubPackageRepo.getTags()) {
+      for (const tag of githubPackageRepo.getTags(true)) {
         tags.add(tag)
       }
 

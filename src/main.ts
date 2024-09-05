@@ -1,9 +1,8 @@
 import * as core from '@actions/core'
 import { Config, getConfig } from './config.js'
-import {
-  GithubPackageRepo,
-  ManifestNotFoundException
-} from './github-package.js'
+import { GithubPackageRepo, scanRoots } from './github-package.js'
+import { PackageVersionExt } from './models.js'
+import { renderTree } from './tree.js'
 
 export async function run(): Promise<void> {
   try {
@@ -20,22 +19,64 @@ export async function run(): Promise<void> {
 }
 
 class CleanupAction {
+  private VersionSet = class {
+    tags: string[] = []
+    versions: PackageVersionExt[] = []
+    parent: CleanupAction
+
+    constructor(parent: CleanupAction) {
+      this.parent = parent
+    }
+
+    addVersions(
+      versions: PackageVersionExt | Iterable<PackageVersionExt>
+    ): this {
+      // Ensure that version is an array.
+      const versions0: Iterable<PackageVersionExt> =
+        Symbol.iterator in versions ? versions : [versions]
+
+      for (const v of versions0) {
+        // Add the version to the list.
+        if (!this.versions.includes(v)) this.versions.push(v)
+
+        // Add each tag to the list of tags as well.
+        for (const t of v.metadata.container.tags) {
+          if (!this.tags.includes(t)) this.tags.push(t)
+        }
+      }
+
+      return this
+    }
+
+    addTags(tags: string | Iterable<string>): this {
+      const tags0: Iterable<string> = typeof tags === 'string' ? [tags] : tags
+
+      for (const t of tags0) {
+        if (!this.tags.includes(t)) {
+          this.tags.push(t)
+        }
+        this.addVersions(this.parent.getClosure(t))
+      }
+      return this
+    }
+  }
+
   // Configuration.
   config: Config
 
   // Provides access to the package repository.
-  githubPackageRepo: GithubPackageRepo
+  repo: GithubPackageRepo
 
   constructor() {
     // Get action configuration.
     this.config = getConfig()
     // Initialize registry and package repository.
-    this.githubPackageRepo = new GithubPackageRepo(this.config)
+    this.repo = new GithubPackageRepo(this.config)
   }
 
   async init(): Promise<void> {
     // Initialize the package repository.
-    await this.githubPackageRepo.init()
+    await this.repo.init()
   }
 
   /**
@@ -47,117 +88,16 @@ class CleanupAction {
    * @param items - The array of items to filter.
    * @returns An array of items that match the regular expression.
    */
-  matchItems(regexStr: string | undefined, items: string[]): string[] {
+  matchItems(regexStr: string, items: string[]): string[] {
     // The result.
     let result: string[] = []
 
-    if (regexStr) {
-      // Compile regular expression.
-      const regex = new RegExp(regexStr)
-      // Filter items based on regular expression.
-      result = items.filter(item => regex.test(item))
-      // Log items that match the regular expression.
-      if (result.length > 0) {
-        core.info(`Items that match regular expression ${regexStr}:`)
-        for (const item of result) {
-          core.info(`- ${item}`)
-        }
-      } else {
-        core.info(`No items that match regular expression ${regexStr}.`)
-      }
-    } else {
-      // Regular expression undefined.
-      core.info('Option not set.')
-    }
+    // Compile regular expression.
+    const regex = new RegExp(regexStr)
+    // Filter items based on regular expression.
+    result = items.filter(item => regex.test(item))
+
     return result
-  }
-
-  isMultiArch(manifest: any): boolean {
-    return (
-      manifest.mediaType === 'application/vnd.oci.image.index.v1+json' ||
-      manifest.mediaType ===
-        'application/vnd.docker.distribution.manifest.list.v2+json'
-    )
-  }
-
-  /**
-   * Returns the digests of all versions recursively reachable from the given tags.
-   *
-   * @param tags - The tags to determine the reachable versions for.
-   * @returns The set of reachable digests.
-   */
-  async getReachableDigestsForTags(tags: Iterable<string>): Promise<string[]> {
-    // The result.
-    const result = new Set<string>()
-
-    // Loop over all tags.
-    for (const tag of tags) {
-      core.startGroup(`Determine reachable versions for tag ${tag}.`)
-      // Get the version for the tag.
-      const version = this.githubPackageRepo.getVersion(tag)
-      if (version) {
-        // Starting with the version's digest, recursively determine all reachable versions.
-        const reachable = await this.getReachableDigestsForDigest(version.name)
-        // Add all reachable versions to the result.
-        for (const child of reachable) {
-          result.add(child)
-        }
-      }
-      core.endGroup()
-    }
-
-    return Array.from(result)
-  }
-
-  /**
-   * Returns the digests of all versions recursively reachable from the given digests.
-   *
-   * @param digests - The digests to determine the reachable versions for.
-   * @returns The set of reachable digests.
-   */
-  async getReachableDigestsForDigests(
-    digests: Iterable<string>
-  ): Promise<string[]> {
-    // The result.
-    const result = new Set<string>()
-
-    // Loop over all digests.
-    for (const digest of digests) {
-      core.startGroup(`Determine reachable versions for digest ${digest}.`)
-      // Starting with the version's digest, recursively determine all reachable versions.
-      const reachable = await this.getReachableDigestsForDigest(digest)
-      // Add all reachable versions to the result.
-      for (const child of reachable) {
-        result.add(child)
-      }
-      core.endGroup()
-    }
-
-    return Array.from(result)
-  }
-
-  // Helper function that fetches the manifest for a given digest, but returns null if the manifest is not found.
-  async getManifest(digest: string): Promise<any> {
-    try {
-      core.debug(`Getting manifest for digest ${digest}.`)
-      // Get the manifest for the digest. May throw an exception.
-      const manifest = this.githubPackageRepo.getManifest(digest)
-      core.debug(`Manifest for digest ${digest}:`)
-      core.debug(JSON.stringify(manifest, null, 2))
-      return manifest
-    } catch (error) {
-      // Handle exception.
-      if (error instanceof ManifestNotFoundException) {
-        // Manifest not found. Log error and return null.
-        core.error(
-          `Manifest for digest ${digest} not found in repository. Skipping.`
-        )
-        return null
-      } else {
-        // Re-throw other errors.
-        throw error
-      }
-    }
   }
 
   /**
@@ -168,64 +108,38 @@ class CleanupAction {
    * @param digest - The digest for which to retrieve the reachable digests.
    * @returns The set of digests of reachable digests.
    */
-  async getReachableDigestsForDigest(digest: string): Promise<string[]> {
+  getClosure(key: string | Iterable<string>): PackageVersionExt[] {
+    // Convert key to an array.
+    const keys: Iterable<string> = typeof key === 'string' ? [key] : key
+
     // The result.
-    const result: string[] = []
+    const result: PackageVersionExt[] = []
 
-    // Get the manifest for the given digest.
-    const manifest = await this.getManifest(digest)
+    // Loop over all keys.
+    for (const key0 of keys) {
+      // Get the version for the given key.
+      const version = this.repo.getVersion(key0)
 
-    if (!manifest) {
-      // Manifest not found. Return empty set.
-      return result
-    }
+      if (!version) continue
 
-    // Add the cgiven digest to the result, since it points to an existing manifest.
-    result.push(digest)
+      // Add the digest of the version to the result.
+      result.push(version)
 
-    // Check the media type of the manifest.
-    if (this.isMultiArch(manifest)) {
-      // Manifest list, i.e. a multi-architecture image pointing to multiple child manifests.
-      core.info(`- ${digest}: manifest list`)
-
-      // Recursively get all reachable versions for each child manifest.
-      // Note: Exceptions will not be caught here if errors occur for any child. This is
-      // to prevent making inconsistent changes later. THe only error case that is handled
-      // is when a manifest is not found, in which case the child is skipped; see above.
-      for (const child of manifest.manifests) {
+      // Recursively get all reachable versions.
+      for (const child of version.children) {
         // Get reachable versions for current child.
-        const reachable = await this.getReachableDigestsForDigest(child.digest)
+        const reachable = this.getClosure(child.name)
         // Add all reachable versions to result.
         for (const i of reachable) {
           result.push(i)
         }
       }
-    } else if (
-      manifest.mediaType === 'application/vnd.oci.image.manifest.v1+json' ||
-      manifest.mediaType ===
-        'application/vnd.docker.distribution.manifest.v2+json'
-    ) {
-      // Image manifest. Can be a single-architecture image or an attestation.
-
-      if (
-        manifest.layers.length === 1 &&
-        manifest.layers[0].mediaType === 'application/vnd.in-toto+json'
-      ) {
-        // Attestation.
-        core.info(`- ${digest}: attestation manifest`)
-      } else {
-        // Single-architecture image.
-        core.info(`- ${digest}: image manifest`)
-      }
-    } else {
-      // Unknown media type.
-      core.warning(`- ${digest}: unknown manifest type ${manifest.mediaType}`)
     }
 
     return result
   }
 
-  logItems(items: string[]): void {
+  logItems(items: string[] | PackageVersionExt[]): void {
     if (items.length > 0) {
       for (const item of items) {
         core.info(`- ${item}`)
@@ -244,20 +158,23 @@ class CleanupAction {
       )
 
       // Load versions.
-      await this.githubPackageRepo.loadVersions()
+      await this.repo.loadVersions()
 
       // Log total number of version retrieved.
-      const digests = this.githubPackageRepo.getDigests()
-      for (const digest of digests) {
-        const version = this.githubPackageRepo.getVersion(digest)
-        if (version) {
-          core.debug(
-            `- id=${version.id}, digest=${version.name}, ${version.metadata.container.tags.length > 0 ? `tags=${version.metadata.container.tags}` : 'untagged'}`
+      {
+        const roots = this.repo.getRoots()
+
+        for (const r of roots) {
+          renderTree<PackageVersionExt>(
+            r,
+            v => v.children,
+            (v, prefix) => {
+              core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`)
+            }
           )
         }
       }
 
-      core.info(`Retrieved ${digests.length} versions.`)
       core.endGroup()
 
       // The logic to determine the tags and versions to delete is as follows:
@@ -299,172 +216,211 @@ class CleanupAction {
       //
       // The final set of version digests to delete is (A_digest v F_digest) \ (B_digest v C_digest v E_digest) = (A_digest \ (B_digest v C_digest)) v F_digest, as per definition.
 
-      // 1. Determine A_tags.
       core.startGroup('Determine tags to delete.')
-      const a_tag = this.matchItems(
-        this.config.includeTags,
-        this.githubPackageRepo.getTags()
-      )
+
+      // The tags and versions to delete.
+      const remove = new this.VersionSet(this)
+
+      if (this.config.includeTags) {
+        const tags = this.matchItems(
+          this.config.includeTags,
+          this.repo.getTags()
+        )
+        remove.addTags(tags)
+
+        // Log tags that match the regular expression.
+        if (tags.length > 0) {
+          for (const item of tags) {
+            core.info(`- ${item}`)
+          }
+        } else {
+          core.info(
+            `No tags match the regular expression ${this.config.includeTags}.`
+          )
+        }
+      } else {
+        core.info('Option not set.')
+      }
+
       core.endGroup()
 
-      // 2. Determine A_digest.
-      const a_digest = await this.getReachableDigestsForTags(a_tag)
-
-      // 3. B_tags.
       core.startGroup('Determine tags to exclude.')
-      const b_tag = this.matchItems(
-        this.config.excludeTags,
-        this.githubPackageRepo.getTags()
-      )
-      core.endGroup()
 
-      // 4. Determine B_digest.
-      const b_digest = await this.getReachableDigestsForTags(b_tag)
+      // The tags and versions to keep.
+      const keep = new this.VersionSet(this)
+
+      if (this.config.excludeTags) {
+        const tags = this.matchItems(
+          this.config.excludeTags,
+          this.repo.getTags()
+        )
+        keep.addTags(tags)
+
+        // Log tags that match the regular expression.
+        if (tags.length > 0) {
+          for (const item of tags) {
+            core.info(`- ${item}`)
+          }
+        } else {
+          core.info(
+            `No tags match the regular expression ${this.config.excludeTags}.`
+          )
+        }
+      } else {
+        core.info('Option not set.')
+      }
+
+      core.endGroup()
 
       core.startGroup('Determine most recent remaining tags to keep.')
-      let c_tag: string[] = []
-      let c_digest: string[] = []
-      let d_tag: string[] = []
-      let d_digest: string[] = []
 
-      const tagsRest: string[] = this.githubPackageRepo
+      const tagsRest: string[] = this.repo
         .getTags()
-        .filter(tag => !a_tag.includes(tag))
-        .filter(tag => !b_tag.includes(tag))
-        .sort((a: string, b: string) => {
+        .filter(tag => !remove.tags.includes(tag) && !keep.tags.includes(tag))
+        .sort((x: string, y: string) => {
           return (
             Date.parse(
-              this.githubPackageRepo.getVersion(b)?.updated_at ??
-                '1970-01-01T00:00:00Z'
+              this.repo.getVersion(y)?.updated_at ?? '1970-01-01T00:00:00Z'
             ) -
             Date.parse(
-              this.githubPackageRepo.getVersion(a)?.updated_at ??
-                '1970-01-01T00:00:00Z'
+              this.repo.getVersion(x)?.updated_at ?? '1970-01-01T00:00:00Z'
             )
           )
         })
 
-      // 5. Determine C_tag.
-      c_tag =
+      // Determine the most recent tags to keep.
+      const c_tags =
         this.config.keepNtagged != null
           ? tagsRest.slice(0, this.config.keepNtagged)
           : tagsRest
 
-      // 6. Determine C_digest.
-      c_digest = await this.getReachableDigestsForTags(c_tag)
+      if (this.config.keepNtagged == null) {
+        core.info('Option not set. All remaining tags will be kept:')
+      } else {
+        core.info(
+          `Keeping the most recent ${this.config.keepNtagged} remaining tags:`
+        )
+      }
+      if (c_tags.length === 0) {
+        core.info('  none')
+      } else {
+        for (const t of c_tags) core.info(`- ${t}`)
+      }
 
-      // 7. Determine D_tag.
-      d_tag =
+      keep.addTags(c_tags)
+
+      // Determine the remaining tags to delete.
+      const d_tags =
         this.config.keepNtagged != null
           ? tagsRest.slice(this.config.keepNtagged)
           : []
 
-      // 8. Determine D_digest.
-      d_digest = await this.getReachableDigestsForTags(d_tag)
-
-      core.info(`Most recent ${this.config.keepNtagged} tags to keep`)
-      this.logItems(c_tag)
-      core.info('Remaining tags to delete: ')
-      this.logItems(d_tag)
+      remove.addTags(d_tags)
 
       core.endGroup()
 
       core.startGroup(
         'Determine most recent remaining untagged images to keep.'
       )
-      let e_digest: string[] = []
-      let f_digest: string[] = []
 
       // Determine the ordered list of all versions that are neither in A or B.
-      const imagesRest: string[] = this.githubPackageRepo
-        .getDigests()
-        .filter(digest => !a_digest.includes(digest))
-        .filter(digest => !b_digest.includes(digest))
-        .filter(digest => !c_digest.includes(digest))
-        .filter(digest => !d_digest.includes(digest))
-        .sort((a: string, b: string) => {
-          const aVersion = this.githubPackageRepo.getVersion(a)
-          const bVersion = this.githubPackageRepo.getVersion(b)
+      const imagesRest: PackageVersionExt[] = this.repo
+        .getVersions()
+        .filter(v => !remove.versions.includes(v))
+        .filter(v => !keep.versions.includes(v))
+        .filter(v => !v.is_attestation)
+        .sort((x: PackageVersionExt, y: PackageVersionExt) => {
           return (
-            Date.parse(bVersion?.updated_at ?? '1970-01-01T00:00:00Z') -
-            Date.parse(aVersion?.updated_at ?? '1970-01-01T00:00:00Z')
+            Date.parse(y?.updated_at ?? '1970-01-01T00:00:00Z') -
+            Date.parse(x?.updated_at ?? '1970-01-01T00:00:00Z')
           )
         })
 
-      core.info('Remaining digests to consider:')
-      this.logItems(imagesRest)
-
       // 8. Determine E_digest.
-      const e_digest0 =
+      const e_versions0: PackageVersionExt[] =
         this.config.keepNuntagged != null
           ? imagesRest.slice(0, this.config.keepNuntagged)
           : imagesRest
 
       // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
-      e_digest = []
-      for (const digest of e_digest0) {
-        const reachable = await this.getReachableDigestsForDigest(digest)
+      const e_versions: PackageVersionExt[] = []
+      for (const v of e_versions0) {
+        const reachable = this.getClosure(v.name)
         for (const child of reachable) {
           // Avoid duplicates.
-          if (!e_digest.includes(child)) e_digest.push(child)
+          if (!e_versions.includes(child)) e_versions.push(child)
         }
         if (
           this.config.keepNuntagged != null &&
-          e_digest.length >= this.config.keepNuntagged
+          e_versions.length >= this.config.keepNuntagged
         ) {
           break
         }
       }
 
-      // 9. Determine F_digest as imagesRest with images in E_digest removed.
-      f_digest = imagesRest.filter(digest => !e_digest.includes(digest))
+      if (this.config.keepNuntagged == null) {
+        core.info('Option not set. All remaining untagged images will be kept.')
+      } else {
+        core.info(
+          `Keeping the most recent ${this.config.keepNuntagged} remaining untagged images:`
+        )
+      }
+      if (e_versions.length === 0) {
+        core.info('  none')
+      } else {
+        for (const v of e_versions) core.info(`- ${v}`)
+      }
 
-      core.info(
-        `Most recent ${this.config.keepNuntagged} untagged images to keep:`
-      )
-      this.logItems(e_digest)
-      core.info('Remaining untagged images to delete:')
-      this.logItems(f_digest)
+      keep.addVersions(e_versions)
+
+      const f_versions = imagesRest.filter(v => !e_versions.includes(v))
+
+      remove.addVersions(f_versions)
 
       core.endGroup()
 
-      core.startGroup('Determine final set of tags to delete.')
-      const tagsDelete = a_tag.filter(tag => !b_tag.includes(tag)).concat(d_tag)
+      core.startGroup('Final set of tags to delete.')
+      const tagsDelete = remove.tags.filter(tag => !keep.tags.includes(tag))
       this.logItems(tagsDelete)
       core.endGroup()
 
-      core.startGroup('Determine final set of versions to delete.')
-      const digestsDelete = a_digest
-        .concat(d_digest)
-        .concat(f_digest)
-        .filter(
-          digest =>
-            !b_digest.includes(digest) &&
-            !c_digest.includes(digest) &&
-            !e_digest.includes(digest)
+      core.startGroup('Final set of versions to delete.')
+      const versionsDelete = remove.versions.filter(
+        v => !keep.versions.includes(v)
+      )
+      {
+        const roots = scanRoots(
+          new Set<PackageVersionExt>(versionsDelete),
+          key => this.repo.getVersion(key)
         )
 
-      this.logItems(digestsDelete)
-      core.endGroup()
-
-      // Delete the tags.
-      for (const tag of tagsDelete) {
-        core.info(`Deleting tag ${tag}.`)
-        await this.githubPackageRepo.deleteTag(tag)
-      }
-
-      // Delete the versions.
-      for (const digest of digestsDelete) {
-        const version = this.githubPackageRepo.getVersion(digest)
-        if (version) {
-          core.info(
-            `Deleting version with digest=${version.name}, id=${version.id}.`
+        for (const r of roots) {
+          renderTree<PackageVersionExt>(
+            r,
+            v => v.children,
+            (v, prefix) => {
+              core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`)
+            }
           )
-          await this.githubPackageRepo.deleteVersion(version.id)
-        } else {
-          core.info(`Version with digest ${digest} not found.`)
         }
       }
+
+      //this.logItems(versionsDelete)
+      core.endGroup()
+
+      core.startGroup('Delete tags.')
+      for (const tag of tagsDelete) {
+        core.info(`Deleting tag ${tag}.`)
+        await this.repo.deleteTag(tag)
+      }
+      core.endGroup()
+
+      core.startGroup('Delete versions.')
+      for (const v of versionsDelete) {
+        core.info(`Deleting version ${v}.`)
+        await this.repo.deleteVersion(v.id)
+      }
+      core.endGroup()
     } catch (error) {
       // Fail the workflow run if an error occurs
       if (error instanceof Error) core.setFailed(error.message)

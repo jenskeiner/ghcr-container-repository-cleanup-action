@@ -10,15 +10,132 @@ import {
   OCIImageManifestModel,
   DockerImageManifestModel,
   DockerManifestListModel,
-  ManifestSchemaInterface,
-  PackageVersion
+  Manifest,
+  PackageVersionExt,
+  ManifestExt
 } from './models.js'
 
-export class ManifestNotFoundException extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ManifestNotFoundException'
+function visit(
+  version: PackageVersionExt,
+  fn: (v: PackageVersionExt) => void
+): void {
+  // Visit version.
+  fn(version)
+
+  // Visit children.
+  for (const child of version.children) {
+    visit(child, fn)
   }
+}
+
+export function scanRoots(
+  uniqueVersions: Set<PackageVersionExt>,
+  getVersion: (key: string | number) => PackageVersionExt | undefined
+): Set<PackageVersionExt> {
+  // Holds versions known to not be roots.
+  const nonRoots = new Set<PackageVersionExt>()
+
+  for (const v of uniqueVersions) {
+    v.children = []
+    v.parent = null
+    v.type = 'unknown'
+  }
+
+  // Loop over all versions.
+  for (const v of uniqueVersions) {
+    // Manifest should have been initialized.
+    if (v.manifest) {
+      // Loop over all digests of child manifests.
+      for (const child_digest of v.manifest.children) {
+        // Get the version for the child digest.
+        const child = getVersion(child_digest)
+
+        // Check if the child actually exists.
+        if (child && uniqueVersions.has(child)) {
+          // Add child to v's children.
+          v.children.push(child)
+
+          // The child is not a root version, as per definition.
+          nonRoots.add(child)
+
+          // Add backward reference from child to parent.
+          child.parent = v
+        }
+      }
+    }
+  }
+
+  // Determine roots.
+  const roots = new Set(uniqueVersions)
+  for (const v of nonRoots) {
+    roots.delete(v)
+  }
+
+  // Set the type for each version.
+  for (const v of uniqueVersions) {
+    if (v.children.length > 0) {
+      v.type = 'multi-arch image'
+      continue
+    }
+
+    const m = v.manifest
+    if (m) {
+      if (
+        m.layers &&
+        m.layers.length === 1 &&
+        m.layers[0].mediaType === 'application/vnd.in-toto+json'
+      ) {
+        v.type = 'Docker attestation'
+      } else {
+        v.type = 'single-arch image'
+      }
+    } else {
+      v.type = 'unknown'
+    }
+  }
+
+  // Up to here, we have ignored GitHub attestation versions. They are linked to the version
+  // they attest via a tag that is equivalent to the digest of the attested version. Each attestation
+  // version should be removed from the roots and added to the children of the attested version.
+  // Also, the type should be adjusted for the attestation version and its children.
+
+  nonRoots.clear()
+
+  // Loop over all roots.
+  for (const r of roots) {
+    // Loop over all tags for the root.
+    for (const t of r.metadata.container.tags) {
+      // Replace - with : in the tag. If the version is an attestation,
+      // this would be the digest of the attested version.
+      const d = t.replace('-', ':')
+
+      // Get the version for the potential digest.
+      const v = getVersion(d)
+
+      // If the version exists and is not identical to r, then r is a GitHub attestation.
+      if (v && v !== r && uniqueVersions.has(v)) {
+        // Recursively set the is_attestation property to true.
+        visit(r, v0 => {
+          v0.type = 'attestation child'
+        })
+        r.type = 'attestation root'
+        r.parent = v
+
+        // Add attestation r to children of v.
+        v.children.push(r)
+
+        // Add r to non-roots.
+        nonRoots.add(r)
+      }
+    }
+  }
+
+  // Remove GitHub attestations from root.
+  for (const v of nonRoots) {
+    roots.delete(v)
+  }
+
+  return roots
 }
 
 /**
@@ -31,17 +148,20 @@ export class GithubPackageRepo {
   // The type of repository (User or Organization)
   repoType = 'Organization'
 
-  // Maps digest or tag to version.
-  versions = new Map<string | number, PackageVersion>()
-
-  // Maps digest, tag, or id to manifest.
-  manifests = new Map<string | number, ManifestSchemaInterface>()
+  // Maps digest, tag, or id to version.
+  versions = new Map<string | number, PackageVersionExt>()
 
   // Collection of tags.
   tags = new Set<string>()
 
   // Collection of digests.
   digests = new Set<string>()
+
+  // Collection of unique versions.
+  uniqueVersions = new Set<PackageVersionExt>()
+
+  // Collection of root versions.
+  roots = new Set<PackageVersionExt>()
 
   // HTTP client.
   axios: AxiosInstance
@@ -70,7 +190,9 @@ export class GithubPackageRepo {
    * @returns A Promise that resolves when the authentication challenge is handled.
    * @throws An error if the authentication challenge is invalid or the login fails.
    */
-  async handleAuthenticationChallenge(challenge: string): Promise<string> {
+  private async handleAuthenticationChallenge(
+    challenge: string
+  ): Promise<string> {
     // Parse the authentication challenge.
     const attributes = parseChallenge(challenge)
 
@@ -136,25 +258,25 @@ export class GithubPackageRepo {
   /**
    * Loads all versions of the package from the GitHub Packages API and populates the internal maps.
    */
-  private async mapVersions(
-    fn: (version: PackageVersion, manifest: ManifestSchemaInterface) => void
+  private async fetchVersions(
+    fn: (version: PackageVersionExt) => void
   ): Promise<void> {
     // Function to retrieve package versions.
-    let getFunc
+    let fetch
 
     // Parameters for the function call.
-    let getParams
+    let fetch_params
 
     if (this.repoType === 'User') {
       // Use the appropriate function for user repos.
-      getFunc = this.config.isPrivateRepo
+      fetch = this.config.isPrivateRepo
         ? this.config.octokit.rest.packages
             .getAllPackageVersionsForPackageOwnedByAuthenticatedUser
         : this.config.octokit.rest.packages
             .getAllPackageVersionsForPackageOwnedByUser
 
       // Parameters for the function call.
-      getParams = {
+      fetch_params = {
         package_type: 'container',
         package_name: this.config.package,
         username: this.config.owner,
@@ -162,12 +284,12 @@ export class GithubPackageRepo {
         per_page: 100
       }
     } else {
-      getFunc =
+      fetch =
         this.config.octokit.rest.packages
           .getAllPackageVersionsForPackageOwnedByOrg
 
       // Parameters for the function call.
-      getParams = {
+      fetch_params = {
         package_type: 'container',
         package_name: this.config.package,
         org: this.config.owner,
@@ -178,47 +300,47 @@ export class GithubPackageRepo {
 
     // Iterate over all package versions.
     for await (const response of this.config.octokit.paginate.iterator(
-      getFunc,
-      getParams
+      fetch,
+      fetch_params
     )) {
       for (const packageVersion of response.data) {
         const version = parsePackageVersion(JSON.stringify(packageVersion))
-
-        // Get the manifest for the package version.
         const manifest = await this.fetchManifest(version.name)
-
-        fn(version, manifest)
+        version.manifest = manifest
+        fn(version)
       }
     }
   }
 
-  private addVersion(
-    version: PackageVersion,
-    manifest: ManifestSchemaInterface
-  ): void {
+  private addVersion(version: PackageVersionExt): void {
     this.versions.set(version.name, version)
     this.versions.set(version.id, version)
     this.digests.add(version.name)
-
-    this.manifests.set(version.name, manifest)
-    this.manifests.set(version.id, manifest)
 
     // Add each tag to the internal map.
     for (const tag of version.metadata.container.tags) {
       this.versions.set(tag, version)
       this.tags.add(tag)
-      this.manifests.set(tag, manifest)
     }
+
+    this.uniqueVersions.add(version)
+  }
+
+  getRoots(): Set<PackageVersionExt> {
+    return this.roots
   }
 
   async loadVersions(): Promise<void> {
     // Clear the internal maps.
     this.versions.clear()
-    this.manifests.clear()
+    this.uniqueVersions.clear()
     this.tags.clear()
     this.digests.clear()
 
-    return this.mapVersions(this.addVersion.bind(this))
+    await this.fetchVersions(this.addVersion.bind(this))
+    this.roots = scanRoots(this.uniqueVersions, this.getVersion.bind(this))
+
+    return Promise.resolve()
   }
 
   /**
@@ -229,12 +351,23 @@ export class GithubPackageRepo {
     return Array.from(this.digests)
   }
 
+  getVersions(): PackageVersionExt[] {
+    // filter duplicates
+    return Array.from(new Set(this.versions.values()))
+  }
+
   /**
    * Return the tags for the package.
    * @returns The tags for the package.
    */
-  getTags(): string[] {
-    return Array.from(this.tags)
+  getTags(includeAttestations = false): string[] {
+    const tags = Array.from(this.tags)
+
+    if (includeAttestations) {
+      return tags
+    } else {
+      return tags.filter(tag => !this.getVersion(tag)?.is_attestation)
+    }
   }
 
   /**
@@ -242,7 +375,7 @@ export class GithubPackageRepo {
    * @param tag The tag to search for.
    * @returns The package version for the tag.
    */
-  getVersion(key: string | number): PackageVersion | undefined {
+  getVersion(key: string | number): PackageVersionExt | undefined {
     return this.versions.get(key)
   }
 
@@ -290,17 +423,18 @@ export class GithubPackageRepo {
     // Remove digest from internal set.
     this.digests.delete(version.name)
     this.versions.delete(version.name)
-    this.manifests.delete(version.name)
 
     // Remove tags from internal set.
     for (const tag of version.metadata.container.tags) {
       this.tags.delete(tag)
       this.versions.delete(tag)
-      this.manifests.delete(tag)
     }
 
     this.versions.delete(id)
-    this.manifests.delete(id)
+
+    this.uniqueVersions.delete(version)
+
+    this.roots = scanRoots(this.uniqueVersions, this.getVersion.bind(this))
   }
 
   /**
@@ -308,42 +442,20 @@ export class GithubPackageRepo {
    *
    * @param digest - The digest of the manifest to retrieve.
    * @returns A Promise that resolves to the retrieved manifest.
-   * @throws {ManifestNotFoundException} If the manifest is not found for the given digest.
    */
-  private async fetchManifest(digest: string): Promise<any> {
-    try {
-      // Retrieve the manifest.
-      const response: AxiosResponse<ManifestSchemaInterface> =
-        await this.axios.get<ManifestSchemaInterface>(
-          `/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`
-        )
+  private async fetchManifest(digest: string): Promise<ManifestExt> {
+    // Retrieve the manifest.
+    const response: AxiosResponse<Manifest> = await this.axios.get<Manifest>(
+      `/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`
+    )
 
-      const manifest:
-        | OCIImageIndexModel
-        | OCIImageManifestModel
-        | DockerImageManifestModel
-        | DockerManifestListModel = parseManifest(
-        JSON.stringify(response?.data)
-      )
+    const manifest:
+      | OCIImageIndexModel
+      | OCIImageManifestModel
+      | DockerImageManifestModel
+      | DockerManifestListModel = parseManifest(JSON.stringify(response?.data))
 
-      return manifest
-    } catch (error) {
-      if (
-        isAxiosError(error) &&
-        error.response != null &&
-        error.response.status === 400
-      ) {
-        throw new ManifestNotFoundException(
-          `Manifest not found for digest ${digest}`
-        )
-      } else {
-        throw error
-      }
-    }
-  }
-
-  getManifest(key: string | number): ManifestSchemaInterface | undefined {
-    return this.manifests.get(key)
+    return manifest as ManifestExt
   }
 
   /**
@@ -370,7 +482,7 @@ export class GithubPackageRepo {
           manifest,
           config
         )
-        core.info(`New digest: ${response.headers['docker-content-digest']}`)
+        core.debug(`New digest: ${response.headers['docker-content-digest']}`)
       } catch (error) {
         if (isAxiosError(error) && error.response?.status === 401) {
           const token = await this.handleAuthenticationChallenge(
@@ -387,7 +499,7 @@ export class GithubPackageRepo {
               }
             }
           )
-          core.info(`New digest: ${response.headers['docker-content-digest']}`)
+          core.debug(`New digest: ${response.headers['docker-content-digest']}`)
         } else {
           throw error
         }
@@ -399,28 +511,27 @@ export class GithubPackageRepo {
     // Get the version for the tag.
     const version = this.getVersion(tag)
 
-    // Get the manifest for the tag.
-    const manifest = this.getManifest(tag)
-
-    if (!version || !manifest) {
+    if (!version) {
       throw new Error(`Version or manifest not found for tag ${tag}.`)
     }
 
-    // Clone the manifest.
-    const manifest0 = JSON.parse(JSON.stringify(manifest))
+    if (!this.config.dryRun) {
+      // Clone the manifest.
+      const manifest0 = JSON.parse(JSON.stringify(version.manifest))
 
-    // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
-    // Push the manifest with the given tag to the registry. This creates a new version with the
-    // tag and removes it from the original version.
-    if (manifest0.manifests) {
-      // Multi-arch manifest. Remove any pointers to child manifests.
-      manifest0.manifests = []
-    } else {
-      // Single-architecture or attestation manifest. Remove any pointers to layers.
-      manifest0.layers = []
+      // Make manifest0 into a fake manifest that does not point to any other manifests or layers.
+      // Push the manifest with the given tag to the registry. This creates a new version with the
+      // tag and removes it from the original version.
+      if (manifest0.manifests) {
+        // Multi-arch manifest. Remove any pointers to child manifests.
+        manifest0.manifests = []
+      } else {
+        // Single-architecture or attestation manifest. Remove any pointers to layers.
+        manifest0.layers = []
+      }
+
+      await this.putManifest(tag, manifest0)
     }
-
-    await this.putManifest(tag, manifest0)
 
     // Remove the tag from the original version. The original manifest does not need to be adjusted.
     version.metadata.container.tags = version.metadata.container.tags.filter(
@@ -430,33 +541,30 @@ export class GithubPackageRepo {
     // It should not be necessary, but just to remove the tag cleanly at this point, remove it from the internal maps and sets.
     this.tags.delete(tag)
     this.versions.delete(tag)
-    this.manifests.delete(tag)
 
-    // Fetch the new version for the tag.
-
-    const fn = (
-      version_: PackageVersion,
-      manifest_: ManifestSchemaInterface
-    ): void => {
-      if (version_.metadata.container.tags.includes(tag)) {
-        this.addVersion(version_, manifest_)
+    if (!this.config.dryRun) {
+      // Fetch the new version for the tag.
+      const fn = (version_: PackageVersionExt): void => {
+        if (version_.metadata.container.tags.includes(tag)) {
+          this.addVersion(version_)
+        }
       }
-    }
 
-    // Reload the package repository to update the version cache.
-    await this.mapVersions(fn.bind(this))
+      // Reload the package repository to update the version cache.
+      await this.fetchVersions(fn.bind(this))
 
-    // Get the new version for the tag.
-    const version0 = this.getVersion(tag)
+      // Get the new version for the tag.
+      const version0 = this.getVersion(tag)
 
-    if (version0) {
-      core.debug(JSON.stringify(version0, null, 2))
-      // Delete the temporary version.
-      await this.deleteVersion(tag)
-    } else {
-      throw new Error(
-        `Intermediate version used to delete tag ${tag} not found.`
-      )
+      if (version0) {
+        core.debug(JSON.stringify(version0, null, 2))
+        // Delete the temporary version.
+        await this.deleteVersion(tag)
+      } else {
+        throw new Error(
+          `Intermediate version used to delete tag ${tag} not found.`
+        )
+      }
     }
   }
 }
