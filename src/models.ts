@@ -13,6 +13,7 @@ export interface Manifest {
   mediaType: MediaType
   manifests?: ManifestReference[]
   layers?: ManifestReference[]
+  subject?: ManifestReference
 }
 
 export interface ManifestExt extends Manifest {

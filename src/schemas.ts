@@ -31,7 +31,8 @@ export const manifestSchema: JTDSchemaType<Manifest> = {
     },
     layers: {
       elements: manifestReferenceSchema
-    }
+    },
+    subject: manifestReferenceSchema
   },
   additionalProperties: true
 }

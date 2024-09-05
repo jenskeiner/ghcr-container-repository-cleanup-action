@@ -46565,7 +46565,8 @@ const manifestSchema = {
         },
         layers: {
             elements: manifestReferenceSchema
-        }
+        },
+        subject: manifestReferenceSchema
     },
     additionalProperties: true
 };
@@ -46748,8 +46749,28 @@ function scanRoots(uniqueVersions, getVersion) {
             }
         }
     }
-    // Determine roots.
+    // Determine preliminary roots.
     const roots = new Set(uniqueVersions);
+    for (const v of nonRoots) {
+        roots.delete(v);
+    }
+    nonRoots.clear();
+    for (const r of roots) {
+        const m = r.manifest;
+        if (m) {
+            // Check for referrer.
+            const s = m.subject;
+            if (s) {
+                // This manifest refers to another manifest.
+                const v = getVersion(s.digest);
+                if (v) {
+                    v.children.push(r);
+                    nonRoots.add(r);
+                    r.parent = v;
+                }
+            }
+        }
+    }
     for (const v of nonRoots) {
         roots.delete(v);
     }
@@ -46765,6 +46786,12 @@ function scanRoots(uniqueVersions, getVersion) {
                 m.layers.length === 1 &&
                 m.layers[0].mediaType === 'application/vnd.in-toto+json') {
                 v.type = 'Docker attestation';
+            }
+            else if (m.subject) {
+                visit(v, v0 => {
+                    v0.type = 'attestation child';
+                });
+                v.type = 'attestation root';
             }
             else {
                 v.type = 'single-arch image';
