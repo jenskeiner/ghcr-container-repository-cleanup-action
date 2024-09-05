@@ -115,13 +115,13 @@ jobs:
             purpose:
               'Check that the latest n untagged images are kept. (multi arch)'
             folder: '09_keep_n_untagged_multi_arch'
-            keep-n-untagged: 10
+            keep-n-untagged: 2
           - title: 'Keep n latest untagged and interleaved images (multi arch)'
             purpose:
               'Check that the latest n untagged images are kept when multi-arch
               images are uploaded interleaved. (multi arch)'
             folder: '10_keep_n_untagged_multi_arch_interleaved'
-            keep-n-untagged: 10
+            keep-n-untagged: 2
           - title: 'All options (single arch)'
             purpose:
               'Check that the combination of all options works correctly.
@@ -139,7 +139,7 @@ jobs:
             include-tags: '^1.35-uclibc$'
             exclude-tags: '^1.31-uclibc$'
             keep-n-tagged: 2
-            keep-n-untagged: 14
+            keep-n-untagged: 2
           - title: 'Dry run (multi-arch)'
             purpose:
               'Check that using the dry-run option does not actually delete

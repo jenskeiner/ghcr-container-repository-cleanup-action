@@ -36,12 +36,16 @@ class CleanupAction {
         Symbol.iterator in versions ? versions : [versions]
 
       for (const v of versions0) {
-        // Add the version to the list.
-        if (!this.versions.includes(v)) this.versions.push(v)
+        const c = this.parent.getClosure(v.name)
 
-        // Add each tag to the list of tags as well.
-        for (const t of v.metadata.container.tags) {
-          if (!this.tags.includes(t)) this.tags.push(t)
+        for (const v0 of c) {
+          // Add the version to the list.
+          if (!this.versions.includes(v0)) this.versions.push(v0)
+
+          // Add each tag to the list of tags as well.
+          for (const t of v0.metadata.container.tags) {
+            if (!this.tags.includes(t)) this.tags.push(t)
+          }
         }
       }
 
@@ -52,10 +56,15 @@ class CleanupAction {
       const tags0: Iterable<string> = typeof tags === 'string' ? [tags] : tags
 
       for (const t of tags0) {
-        if (!this.tags.includes(t)) {
-          this.tags.push(t)
+        const v = this.parent.repo.getVersion(t)
+
+        if (v) {
+          if (!this.tags.includes(t)) {
+            this.tags.push(t)
+          }
+
+          this.addVersions(v)
         }
-        this.addVersions(this.parent.getClosure(t))
       }
       return this
     }
@@ -324,8 +333,7 @@ class CleanupAction {
       )
 
       // Determine the ordered list of all versions that are neither in A or B.
-      const imagesRest: PackageVersionExt[] = this.repo
-        .getVersions()
+      const imagesRest: PackageVersionExt[] = Array.from(this.repo.getRoots())
         .filter(v => !remove.versions.includes(v))
         .filter(v => !keep.versions.includes(v))
         .filter(v => !v.is_attestation)
@@ -337,26 +345,10 @@ class CleanupAction {
         })
 
       // 8. Determine E_digest.
-      const e_versions0: PackageVersionExt[] =
+      const e_versions: PackageVersionExt[] =
         this.config.keepNuntagged != null
           ? imagesRest.slice(0, this.config.keepNuntagged)
           : imagesRest
-
-      // Loop over all digests in e_digest0. For each, determine all reachable digests and add them to e_digest, until there are at least keepNuntagged digests.
-      const e_versions: PackageVersionExt[] = []
-      for (const v of e_versions0) {
-        const reachable = this.getClosure(v.name)
-        for (const child of reachable) {
-          // Avoid duplicates.
-          if (!e_versions.includes(child)) e_versions.push(child)
-        }
-        if (
-          this.config.keepNuntagged != null &&
-          e_versions.length >= this.config.keepNuntagged
-        ) {
-          break
-        }
-      }
 
       if (this.config.keepNuntagged == null) {
         core.info('Option not set. All remaining untagged images will be kept.')
