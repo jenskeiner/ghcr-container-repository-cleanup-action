@@ -1,6 +1,6 @@
 import * as core from '@actions/core'
 import AjvModule from 'ajv/dist/jtd.js'
-import { manifestSchema, packageVersionSchema } from './schemas.js'
+import { manifestSchema, packageVersionSchema } from './schemas'
 import {
   Manifest,
   OCIImageIndexModel,
@@ -10,7 +10,7 @@ import {
   PackageVersionModel,
   PackageVersionExt,
   PackageVersion
-} from './models.js'
+} from './models'
 
 const Ajv = (AjvModule as any).default || AjvModule
 const ajv = new Ajv()
@@ -24,6 +24,10 @@ export function parseManifest(
   | OCIImageManifestModel
   | DockerImageManifestModel
   | DockerManifestListModel {
+  if (typeof jsonString !== 'string') {
+    throw new Error('Invalid JSON data')
+  }
+
   const data = parseManifest0(jsonString) as Manifest
 
   if (data === undefined) {
@@ -31,6 +35,10 @@ export function parseManifest(
     core.info(`${parseManifest0.message}`)
     core.info(`${jsonString}`)
     throw new Error('Invalid JSON data')
+  }
+
+  if (!data.mediaType) {
+    throw new Error('Unknown media type')
   }
 
   switch (data.mediaType) {
@@ -50,6 +58,10 @@ export function parseManifest(
 const parsePackageVersion0 = ajv.compileParser(packageVersionSchema)
 
 export function parsePackageVersion(jsonString: string): PackageVersionExt {
+  if (typeof jsonString !== 'string') {
+    throw new Error('Invalid JSON data')
+  }
+
   const data = parsePackageVersion0(jsonString) as PackageVersion
 
   if (data === undefined) {

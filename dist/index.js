@@ -45712,12 +45712,18 @@ const Ajv = (jtd_default())["default"] || (jtd_default());
 const ajv = new Ajv();
 const parseManifest0 = ajv.compileParser(manifestSchema);
 function parseManifest(jsonString) {
+    if (typeof jsonString !== 'string') {
+        throw new Error('Invalid JSON data');
+    }
     const data = parseManifest0(jsonString);
     if (data === undefined) {
         core.info(`${parseManifest0.position}`);
         core.info(`${parseManifest0.message}`);
         core.info(`${jsonString}`);
         throw new Error('Invalid JSON data');
+    }
+    if (!data.mediaType) {
+        throw new Error('Unknown media type');
     }
     switch (data.mediaType) {
         case 'application/vnd.oci.image.manifest.v1+json':
@@ -45734,6 +45740,9 @@ function parseManifest(jsonString) {
 }
 const parsePackageVersion0 = ajv.compileParser(packageVersionSchema);
 function parsePackageVersion(jsonString) {
+    if (typeof jsonString !== 'string') {
+        throw new Error('Invalid JSON data');
+    }
     const data = parsePackageVersion0(jsonString);
     if (data === undefined) {
         throw new Error('Invalid JSON data');
