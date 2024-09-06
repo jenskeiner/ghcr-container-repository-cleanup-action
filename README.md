@@ -4,6 +4,7 @@
 ![CI](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/ci.yml/badge.svg?branch=main)
 [![Check dist/](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml/badge.svg?branch=main)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/autofix.yml)
 [![CodeQL](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/jenskeiner/ghcr-container-repository-cleanup-action/actions/workflows/codeql-analysis.yml)
+[![codecov](https://codecov.io/github/jenskeiner/ghcr-container-repository-cleanup-action/branch/main/graph/badge.svg?token=X84LE2UUQT)](https://codecov.io/github/jenskeiner/ghcr-container-repository-cleanup-action)
 
 This GitHub Action deletes tags and versions (container images) from a GitHub
 Container Registry (ghcr.io) package repository. It is based on
