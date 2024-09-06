@@ -1,8 +1,8 @@
 import * as core from '@actions/core'
-import { Config, getConfig } from './config.js'
-import { GithubPackageRepo, scanRoots } from './github-package.js'
-import { PackageVersionExt } from './models.js'
-import { renderTree } from './tree.js'
+import { Config, getConfig } from './config'
+import { GithubPackageRepo, scanRoots } from './github-package'
+import { PackageVersionExt } from './models'
+import { renderTree } from './tree'
 
 export async function run(): Promise<void> {
   try {

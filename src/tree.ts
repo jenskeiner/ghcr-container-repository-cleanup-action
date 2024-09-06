@@ -1,7 +1,12 @@
-type NodeRenderer<T> = (node: T, prefix: string) => void
-type ChildrenGetter<T> = (node: T) => T[] | undefined
+export interface Node<T extends Node<T>> {
+  children: T[]
+  parent: T | null
+}
 
-export function renderTree<T>(
+type NodeRenderer<T extends Node<T>> = (node: T, prefix: string) => void
+type ChildrenGetter<T extends Node<T>> = (node: T) => T[] | undefined
+
+export function renderTree<T extends Node<T>>(
   root: T,
   getChildren: ChildrenGetter<T>,
   renderNode: NodeRenderer<T>
@@ -35,4 +40,32 @@ export function renderTree<T>(
 
   // Start rendering from the root
   renderSubtree(root, '', '')
+}
+
+export function linkVersions<T extends Node<T>>(parent: T, child: T): T {
+  if (parent === child) {
+    throw new Error('Cannot link a node to itself.')
+  }
+  if (child.parent) {
+    if (child.parent === parent) {
+      return child
+    } else {
+      throw new Error('Child already has a parent.')
+    }
+  }
+  child.parent = parent
+  if (!parent.children.includes(child)) {
+    parent.children.push(child)
+  }
+  return child
+}
+
+export function visit<T extends Node<T>>(node: T, fn: (v: T) => void): void {
+  // Visit version.
+  fn(node)
+
+  // Visit children.
+  for (const child of node.children) {
+    visit(child, fn)
+  }
 }
