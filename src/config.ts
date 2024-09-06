@@ -56,7 +56,7 @@ export class Config {
           }
         },
         onSecondaryRateLimit: (
-          retryAfter: number,
+          _retryAfter: number,
           options: EndpointDefaults,
           octokit: Octokit
         ) => {

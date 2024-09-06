@@ -40063,7 +40063,7 @@ class Config {
                         return true;
                     }
                 },
-                onSecondaryRateLimit: (retryAfter, options, octokit) => {
+                onSecondaryRateLimit: (_retryAfter, options, octokit) => {
                     // does not retry, only logs a warning
                     octokit.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`);
                 }
@@ -45718,7 +45718,7 @@ class PackageVersionModel {
 
 
 
-const Ajv = (jtd_default()).Ajv;
+const Ajv = (jtd_default())["default"] || (jtd_default());
 const ajv = new Ajv();
 const parseManifest0 = ajv.compileParser(manifestSchema);
 function parseManifest(jsonString) {

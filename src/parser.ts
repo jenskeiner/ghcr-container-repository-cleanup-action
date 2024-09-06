@@ -12,7 +12,7 @@ import {
   PackageVersion
 } from './models.js'
 
-const Ajv = AjvModule.Ajv
+const Ajv = (AjvModule as any).default || AjvModule
 const ajv = new Ajv()
 
 const parseManifest0 = ajv.compileParser(manifestSchema)
