@@ -45533,18 +45533,7 @@ axiosRetry.linearDelay = linearDelay;
 axiosRetry.isRetryableError = isRetryableError;
 /* harmony default export */ const esm = (axiosRetry);
 
-// EXTERNAL MODULE: external "crypto"
-var external_crypto_ = __nccwpck_require__(6113);
 ;// CONCATENATED MODULE: ./src/utils.ts
-
-/**
- * Calculates the digest of a manifest using the SHA256 algorithm.
- * @param manifest - The manifest to calculate the digest for.
- * @returns The calculated digest in the format "sha256:{digest}".
- */
-function calcDigest(manifest) {
-    return `sha256:${createHash('sha256').update(manifest).digest('hex').toLowerCase()}`;
-}
 /**
  * Parses a challenge string and returns a map of attributes.
  * @param challenge - The challenge string to parse.
@@ -45556,12 +45545,13 @@ function parseChallenge(challenge) {
         challenge = challenge.replace('Bearer ', '');
         const parts = challenge.split(',');
         for (const part of parts) {
-            const values = part.split('=');
-            let value = values[1];
+            const values = part.trim().split('=');
+            const key = values[0].trim();
+            let value = values[1].trim();
             if (value.startsWith('"') && value.endsWith('"')) {
                 value = value.substring(1, value.length - 1);
             }
-            attributes.set(values[0], value);
+            attributes.set(key, value);
         }
     }
     return attributes;
@@ -45722,12 +45712,18 @@ const Ajv = (jtd_default())["default"] || (jtd_default());
 const ajv = new Ajv();
 const parseManifest0 = ajv.compileParser(manifestSchema);
 function parseManifest(jsonString) {
+    if (typeof jsonString !== 'string') {
+        throw new Error('Invalid JSON data');
+    }
     const data = parseManifest0(jsonString);
     if (data === undefined) {
         core.info(`${parseManifest0.position}`);
         core.info(`${parseManifest0.message}`);
         core.info(`${jsonString}`);
         throw new Error('Invalid JSON data');
+    }
+    if (!data.mediaType) {
+        throw new Error('Unknown media type');
     }
     switch (data.mediaType) {
         case 'application/vnd.oci.image.manifest.v1+json':
@@ -45744,6 +45740,9 @@ function parseManifest(jsonString) {
 }
 const parsePackageVersion0 = ajv.compileParser(packageVersionSchema);
 function parsePackageVersion(jsonString) {
+    if (typeof jsonString !== 'string') {
+        throw new Error('Invalid JSON data');
+    }
     const data = parsePackageVersion0(jsonString);
     if (data === undefined) {
         throw new Error('Invalid JSON data');
