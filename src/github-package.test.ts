@@ -2,13 +2,17 @@ import {
   ManifestHolder,
   ManifestReference,
   MediaType,
-  PackageMetadataHolder
+  PackageMetadataHolder,
+  PackageVersionExt,
+  Manifest
 } from './models'
 import {
   getManifestChildren,
   discoverAndLinkManifestChildren,
   discoverAndLinkReferrers,
-  discoverAndLinkReferrerTags
+  discoverAndLinkReferrerTags,
+  getArtifactType,
+  scanRoots
 } from './github-package'
 import { Node } from './tree'
 
@@ -140,7 +144,6 @@ interface TestNode extends ManifestHolder, Node<TestNode> {
     manifests?: { mediaType: string; digest: string }[]
   }
   children: TestNode[]
-  parent: TestNode | null
 }
 
 describe('discoverAndLinkManifestChildren', () => {
@@ -154,8 +157,7 @@ describe('discoverAndLinkManifestChildren', () => {
       mediaType: 'application/vnd.oci.image.manifest.v1+json',
       manifests: childDigests.map(digest => ({ mediaType: 'foo', digest }))
     },
-    children: [],
-    parent: null
+    children: []
   })
 
   // Helper function to create a getVersion function
@@ -188,8 +190,6 @@ describe('discoverAndLinkManifestChildren', () => {
     expect(result).toContain(child1)
     expect(result).toContain(child2)
     expect(parent.children).toEqual([child1, child2])
-    expect(child1.parent).toBe(parent)
-    expect(child2.parent).toBe(parent)
   })
 
   test('multiple versions with no children', () => {
@@ -225,10 +225,6 @@ describe('discoverAndLinkManifestChildren', () => {
     expect(result).toContain(child4)
     expect(parent1.children).toEqual([child1, child2])
     expect(parent2.children).toEqual([child3, child4])
-    expect(child1.parent).toBe(parent1)
-    expect(child2.parent).toBe(parent1)
-    expect(child3.parent).toBe(parent2)
-    expect(child4.parent).toBe(parent2)
   })
 
   test('versions with circular references', () => {
@@ -242,8 +238,6 @@ describe('discoverAndLinkManifestChildren', () => {
     expect(result).toContain(node2)
     expect(node1.children).toEqual([node2])
     expect(node2.children).toEqual([node1])
-    expect(node1.parent).toBe(node2)
-    expect(node2.parent).toBe(node1)
   })
 
   test('versions with missing children', () => {
@@ -255,7 +249,6 @@ describe('discoverAndLinkManifestChildren', () => {
     expect(result).toHaveLength(1)
     expect(result).toContain(child)
     expect(parent.children).toEqual([child])
-    expect(child.parent).toBe(parent)
   })
 })
 
@@ -267,7 +260,6 @@ interface TestVersion extends ManifestHolder, Node<TestVersion> {
     subject?: { mediaType: string; digest: string }
   }
   children: TestVersion[]
-  parent: TestVersion | null
 }
 
 describe('discoverAndLinkReferrers', () => {
@@ -283,8 +275,7 @@ describe('discoverAndLinkReferrers', () => {
         ? { mediaType: 'foo', digest: subjectDigest }
         : undefined
     },
-    children: [],
-    parent: null
+    children: []
   })
 
   it('should return an empty array for an empty set of versions', () => {
@@ -307,8 +298,6 @@ describe('discoverAndLinkReferrers', () => {
 
     expect(result).toEqual([])
     expect(getVersion).not.toHaveBeenCalled()
-    expect(v1.parent).toBeNull()
-    expect(v2.parent).toBeNull()
   })
 
   it('should not link versions with non-existent subjects', () => {
@@ -320,7 +309,6 @@ describe('discoverAndLinkReferrers', () => {
 
     expect(result).toEqual([])
     expect(getVersion).toHaveBeenCalledWith('non-existent')
-    expect(v1.parent).toBeNull()
   })
 
   it('should link versions with existing subjects', () => {
@@ -333,7 +321,6 @@ describe('discoverAndLinkReferrers', () => {
 
     expect(result).toEqual([v1])
     expect(getVersion).toHaveBeenCalledWith('subject1')
-    expect(v1.parent).toBe(v2)
     expect(v2.children).toContain(v1)
   })
 
@@ -349,8 +336,6 @@ describe('discoverAndLinkReferrers', () => {
     expect(result).toContain(v1)
     expect(result).toContain(v2)
     expect(getVersion).toHaveBeenCalledTimes(2)
-    expect(v1.parent).toBe(v3)
-    expect(v2.parent).toBe(v3)
     expect(v3.children).toContain(v1)
     expect(v3.children).toContain(v2)
   })
@@ -368,8 +353,6 @@ describe('discoverAndLinkReferrers', () => {
     expect(result).toContain(v1)
     expect(result).toContain(v2)
     expect(getVersion).toHaveBeenCalledTimes(2)
-    expect(v1.parent).toBe(v2)
-    expect(v2.parent).toBe(v1)
     expect(v1.children).toContain(v2)
     expect(v2.children).toContain(v1)
   })
@@ -400,11 +383,6 @@ describe('discoverAndLinkReferrers', () => {
 
     expect(result).toEqual(expect.arrayContaining([v1, v2, v3, v5]))
     expect(getVersion).toHaveBeenCalledTimes(4)
-    expect(v1.parent).toBe(v2)
-    expect(v2.parent).toBe(v3)
-    expect(v3.parent).toBe(v4)
-    expect(v4.parent).toBeNull()
-    expect(v5.parent).toBe(v4)
     expect(v2.children).toContain(v1)
     expect(v3.children).toContain(v2)
     expect(v4.children).toContain(v3)
@@ -416,7 +394,6 @@ describe('discoverAndLinkReferrers', () => {
 class MockVersion implements PackageMetadataHolder, Node<MockVersion> {
   digest: string // Holds the digest which in realityis stored in the manifest.
   metadata: { package_type: string; container: { tags: string[] } }
-  parent: MockVersion | null = null
   children: MockVersion[] = []
 
   constructor(digest: string, tags: string[]) {
@@ -454,7 +431,6 @@ describe('discoverAndLinkReferrerTags', () => {
 
     expect(result).toHaveLength(1)
     expect(v1.children).toContain(v3)
-    expect(v3.parent).toBe(v1)
   })
 
   test('should not link to self', () => {
@@ -468,7 +444,6 @@ describe('discoverAndLinkReferrerTags', () => {
 
     expect(result).toHaveLength(0)
     expect(v1.children).toHaveLength(0)
-    expect(v1.parent).toBeNull()
   })
 
   test('should handle multiple referrers', () => {
@@ -490,8 +465,6 @@ describe('discoverAndLinkReferrerTags', () => {
     expect(result).toHaveLength(2)
     expect(v1.children).toContain(v2)
     expect(v1.children).toContain(v3)
-    expect(v2.parent).toBe(v1)
-    expect(v3.parent).toBe(v1)
   })
 
   test('should handle versions not in the set', () => {
@@ -508,8 +481,6 @@ describe('discoverAndLinkReferrerTags', () => {
     expect(result).toHaveLength(0)
     expect(v1.children).toHaveLength(0)
     expect(v2.children).toHaveLength(0)
-    expect(v1.parent).toBeNull()
-    expect(v2.parent).toBeNull()
   })
 
   test('should handle empty set of versions', () => {
@@ -529,7 +500,453 @@ describe('discoverAndLinkReferrerTags', () => {
     expect(result).toHaveLength(0)
     expect(v1.children).toHaveLength(0)
     expect(v2.children).toHaveLength(0)
-    expect(v1.parent).toBeNull()
-    expect(v2.parent).toBeNull()
+  })
+})
+
+describe('getArtifactType', () => {
+  // Helper function to create a basic PackageVersionExt object
+  const createPackageVersionExt = (
+    manifest: Partial<Manifest>,
+    tags: string[] = []
+  ): PackageVersionExt =>
+    ({
+      manifest: manifest as Manifest,
+      metadata: {
+        container: {
+          tags
+        }
+      }
+    }) as PackageVersionExt
+
+  test('should return "single-arch image" for manifest with layers', () => {
+    const version = createPackageVersionExt({
+      layers: [
+        {
+          mediaType: 'application/vnd.docker.image.rootfs.diff.tar.gzip',
+          digest: 'sha256:1234567890abcdef'
+        }
+      ]
+    })
+    expect(getArtifactType(version)).toBe('single-arch image')
+  })
+
+  test('should return "multi-arch image" for manifest with child manifests', () => {
+    const version = createPackageVersionExt({
+      manifests: [
+        {
+          digest: 'sha256:1234567890abcdef',
+          mediaType: 'application/vnd.docker.distribution.manifest.v2+json'
+        },
+        {
+          digest: 'sha256:abcdef1234567890',
+          mediaType: 'application/vnd.docker.distribution.manifest.v2+json'
+        }
+      ]
+    })
+    expect(getArtifactType(version)).toBe('multi-arch image')
+  })
+
+  test('should return "attestation" for manifest with all layers of type application/vnd.in-toto+json', () => {
+    const version = createPackageVersionExt({
+      layers: [
+        {
+          mediaType: 'application/vnd.in-toto+json',
+          digest: 'sha256:1234567890abcdef'
+        },
+        {
+          mediaType: 'application/vnd.in-toto+json',
+          digest: 'sha256:abcdef1234567890'
+        }
+      ]
+    })
+    expect(getArtifactType(version)).toBe('attestation')
+  })
+
+  test('should return "attestation" for manifest with subject', () => {
+    const version = createPackageVersionExt({
+      subject: {
+        digest: 'sha256:1234567890abcdef',
+        mediaType: 'application/vnd.docker.distribution.manifest.v2+json'
+      }
+    })
+    expect(getArtifactType(version)).toBe('attestation')
+  })
+
+  test('should return "attestation" for version with referrer tag schema', () => {
+    const version = createPackageVersionExt({}, [
+      'sha256-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+    ])
+    expect(getArtifactType(version)).toBe('attestation')
+  })
+
+  test('should return "unknown" for manifest without layers, manifests, subject, or referrer tag schema', () => {
+    const version = createPackageVersionExt({})
+    expect(getArtifactType(version)).toBe('unknown')
+  })
+
+  test('should return "single-arch image" for manifest with mixed layer types', () => {
+    const version = createPackageVersionExt({
+      layers: [
+        {
+          mediaType: 'application/vnd.docker.image.rootfs.diff.tar.gzip',
+          digest: 'sha256:1234567890abcdef'
+        },
+        {
+          mediaType: 'application/vnd.oci.image.layer.v1.tar+gzip',
+          digest: 'sha256:abcdef1234567890'
+        }
+      ]
+    })
+    expect(getArtifactType(version)).toBe('single-arch image')
+  })
+
+  test('should prioritize attestation check over single-arch image', () => {
+    const version = createPackageVersionExt({
+      layers: [
+        {
+          mediaType: 'application/vnd.in-toto+json',
+          digest: 'sha256:1234567890abcdef'
+        },
+        {
+          mediaType: 'application/vnd.in-toto+json',
+          digest: 'sha256:abcdef1234567890'
+        }
+      ],
+      subject: {
+        digest: 'sha256:1234567890abcdef',
+        mediaType: 'application/vnd.docker.distribution.manifest.v2+json'
+      }
+    })
+    expect(getArtifactType(version)).toBe('attestation')
+  })
+
+  test('should return "unknown" for empty manifest', () => {
+    const version = createPackageVersionExt({
+      manifests: []
+    })
+    expect(getArtifactType(version)).toBe('unknown')
+  })
+})
+
+describe('scanRoots', () => {
+  // Helper function to create a basic PackageVersionExt object
+  const createPackageVersionExt = (
+    id: number,
+    name: string,
+    manifest: Partial<Manifest>,
+    tags: string[] = []
+  ): PackageVersionExt =>
+    ({
+      id,
+      name,
+      manifest: manifest as Manifest,
+      metadata: {
+        package_type: 'container',
+        container: {
+          tags
+        }
+      },
+      children: [],
+      parent: null,
+      type: 'unknown',
+      package_html_url: '',
+      created_at: '',
+      updated_at: '',
+      html_url: '',
+      url: '',
+      is_attestation: false
+    }) as PackageVersionExt
+
+  let uniqueVersions: Set<PackageVersionExt>
+  let getVersion: jest.Mock
+
+  beforeEach(() => {
+    uniqueVersions = new Set()
+    getVersion = jest.fn()
+  })
+
+  test('should return empty set when no versions are provided', () => {
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(0)
+  })
+
+  test('should correctly identify root versions', () => {
+    const version1 = createPackageVersionExt(1, 'v1', {
+      layers: [{ mediaType: 'application/layer', digest: 'foo' }]
+    })
+    const version2 = createPackageVersionExt(2, 'v2', {
+      layers: [{ mediaType: 'application/layer', digest: 'bar' }]
+    })
+
+    uniqueVersions.add(version1)
+    uniqueVersions.add(version2)
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(2)
+    expect(result.has(version1)).toBe(true)
+    expect(result.has(version2)).toBe(true)
+  })
+
+  test('should correctly link manifest children', () => {
+    const parent = createPackageVersionExt(1, 'parent', {
+      manifests: [{ digest: 'child', mediaType: 'foo' }]
+    })
+    const child = createPackageVersionExt(2, 'child', {
+      layers: [{ digest: 'bar', mediaType: 'application/layer' }]
+    })
+
+    uniqueVersions.add(parent)
+    uniqueVersions.add(child)
+    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(parent)).toBe(true)
+    expect(parent.children).toContain(child)
+  })
+
+  test('should correctly link referrers', () => {
+    const subject = createPackageVersionExt(1, 'subject', {
+      layers: [{ mediaType: 'application/layer', digest: 'foo' }]
+    })
+    const referrer = createPackageVersionExt(2, 'referrer', {
+      subject: { digest: 'subject', mediaType: 'foo' }
+    })
+
+    uniqueVersions.add(subject)
+    uniqueVersions.add(referrer)
+    getVersion.mockImplementation(key =>
+      key === 'subject' ? subject : undefined
+    )
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(subject)).toBe(true)
+    expect(subject.children).toContain(referrer)
+  })
+
+  test('should correctly link referrer tags', () => {
+    const target = createPackageVersionExt(
+      1,
+      'target',
+      { layers: [{ mediaType: 'application/layer', digest: 'foo' }] },
+      ['target-tag']
+    )
+    const referrer = createPackageVersionExt(
+      2,
+      'referrer',
+      {
+        layers: [{ mediaType: 'application/vnd.in-toto+json', digest: 'foo' }]
+      },
+      ['sha256-1234567890abcdef']
+    )
+
+    uniqueVersions.add(target)
+    uniqueVersions.add(referrer)
+    getVersion.mockImplementation(key =>
+      key === 'sha256:1234567890abcdef' ? target : undefined
+    )
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(target)).toBe(true)
+    expect(target.children).toContain(referrer)
+  })
+
+  test('should correctly set artifact types', () => {
+    const singleArch = createPackageVersionExt(1, 'single', {
+      layers: [{ mediaType: 'application/layer', digest: 'foo' }]
+    })
+    const multiArch = createPackageVersionExt(2, 'multi', {
+      manifests: [{ digest: 'child', mediaType: 'foo' }]
+    })
+    const attestation = createPackageVersionExt(3, 'attest', {
+      layers: [{ mediaType: 'application/vnd.in-toto+json', digest: 'foo' }]
+    })
+
+    uniqueVersions.add(singleArch)
+    uniqueVersions.add(multiArch)
+    uniqueVersions.add(attestation)
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(3)
+    expect(singleArch.type).toBe('single-arch image')
+    expect(multiArch.type).toBe('multi-arch image')
+    expect(attestation.type).toBe('attestation')
+  })
+
+  test('should handle complex hierarchies', () => {
+    const root = createPackageVersionExt(1, 'root', {
+      manifests: [
+        { digest: 'child1', mediaType: 'foo' },
+        { digest: 'child2', mediaType: 'foo' }
+      ]
+    })
+    const child1 = createPackageVersionExt(2, 'child1', {
+      layers: [{ digest: 'bar', mediaType: 'application/layer' }]
+    })
+    const child2 = createPackageVersionExt(3, 'child2', {
+      layers: [{ digest: 'baz', mediaType: 'application/layer' }]
+    })
+    const attestation = createPackageVersionExt(4, 'attestation', {
+      subject: { digest: 'root', mediaType: 'foo' },
+      layers: [{ mediaType: 'application/vnd.in-toto+json', digest: 'qux' }]
+    })
+
+    uniqueVersions.add(root)
+    uniqueVersions.add(child1)
+    uniqueVersions.add(child2)
+    uniqueVersions.add(attestation)
+
+    getVersion.mockImplementation(key => {
+      switch (key) {
+        case 'child1':
+          return child1
+        case 'child2':
+          return child2
+        case 'root':
+          return root
+        default:
+          return undefined
+      }
+    })
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(root)).toBe(true)
+    expect(root.children).toContain(child1)
+    expect(root.children).toContain(child2)
+    expect(root.children).toContain(attestation)
+  })
+
+  test('should handle orphaned versions', () => {
+    const root = createPackageVersionExt(1, 'root', {
+      manifests: [{ digest: 'child', mediaType: 'foo' }]
+    })
+    const child = createPackageVersionExt(2, 'child', {
+      layers: [{ digest: 'bar', mediaType: 'application/layer' }]
+    })
+    const orphan = createPackageVersionExt(3, 'orphan', {
+      layers: [{ digest: 'baz', mediaType: 'application/layer' }]
+    })
+
+    uniqueVersions.add(root)
+    uniqueVersions.add(child)
+    uniqueVersions.add(orphan)
+
+    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(2)
+    expect(result.has(root)).toBe(true)
+    expect(result.has(orphan)).toBe(true)
+    expect(root.children).toContain(child)
+  })
+
+  test('should handle versions with multiple parents', () => {
+    const parent1 = createPackageVersionExt(1, 'parent1', {
+      manifests: [{ digest: 'child', mediaType: 'foo' }]
+    })
+    const parent2 = createPackageVersionExt(2, 'parent2', {
+      manifests: [{ digest: 'child', mediaType: 'foo' }]
+    })
+    const child = createPackageVersionExt(3, 'child', {
+      layers: [{ digest: 'bar', mediaType: 'application/layer' }]
+    })
+
+    uniqueVersions.add(parent1)
+    uniqueVersions.add(parent2)
+    uniqueVersions.add(child)
+
+    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(2)
+    expect(result.has(parent1)).toBe(true)
+    expect(result.has(parent2)).toBe(true)
+    expect(parent1.children).toContain(child)
+    expect(parent2.children).toContain(child)
+  })
+
+  test('should handle long chains of versions', () => {
+    const versions = Array.from({ length: 100 }, (_, i) =>
+      createPackageVersionExt(
+        i + 1,
+        `v${i + 1}`,
+        i === 99
+          ? { layers: [{ digest: 'foo', mediaType: 'application/layer' }] }
+          : { manifests: [{ digest: `v${i + 2}`, mediaType: 'foo' }] }
+      )
+    )
+
+    for (const v of versions) uniqueVersions.add(v)
+
+    getVersion.mockImplementation(key => versions.find(v => v.name === key))
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(versions[0])).toBe(true)
+
+    // Check that the chain is correctly linked
+    for (let i = 0; i < 99; i++) {
+      expect(versions[i].children).toContain(versions[i + 1])
+    }
+  })
+
+  test('should handle mixed artifact types in hierarchy', () => {
+    const root = createPackageVersionExt(1, 'root', {
+      manifests: [
+        { digest: 'child1', mediaType: 'foo' },
+        { digest: 'child2', mediaType: 'foo' }
+      ]
+    })
+    const child1 = createPackageVersionExt(2, 'child1', {
+      layers: [{ digest: 'bar', mediaType: 'application/layer' }]
+    })
+    const child2 = createPackageVersionExt(3, 'child2', {
+      manifests: [{ digest: 'grandchild', mediaType: 'foo' }]
+    })
+    const grandchild = createPackageVersionExt(4, 'grandchild', {
+      layers: [{ digest: 'baz', mediaType: 'application/layer' }]
+    })
+    const attestation = createPackageVersionExt(5, 'attestation', {
+      subject: { digest: 'root', mediaType: 'foo' },
+      layers: [{ mediaType: 'application/vnd.in-toto+json', digest: 'qux' }]
+    })
+
+    uniqueVersions.add(root)
+    uniqueVersions.add(child1)
+    uniqueVersions.add(child2)
+    uniqueVersions.add(grandchild)
+    uniqueVersions.add(attestation)
+
+    getVersion.mockImplementation(key => {
+      switch (key) {
+        case 'child1':
+          return child1
+        case 'child2':
+          return child2
+        case 'grandchild':
+          return grandchild
+        case 'root':
+          return root
+        default:
+          return undefined
+      }
+    })
+
+    const result = scanRoots(uniqueVersions, getVersion)
+    expect(result.size).toBe(1)
+    expect(result.has(root)).toBe(true)
+    expect(root.children).toContain(child1)
+    expect(root.children).toContain(child2)
+    expect(root.children).toContain(attestation)
+    expect(child2.children).toContain(grandchild)
+
+    expect(root.type).toBe('multi-arch image')
+    expect(child1.type).toBe('single-arch image')
+    expect(child2.type).toBe('multi-arch image')
+    expect(grandchild.type).toBe('single-arch image')
+    expect(attestation.type).toBe('attestation')
   })
 })

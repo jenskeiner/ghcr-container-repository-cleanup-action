@@ -46772,15 +46772,6 @@ function linkVersions(parent, child) {
     if (parent === child) {
         throw new Error('Cannot link a node to itself.');
     }
-    if (child.parent) {
-        if (child.parent === parent) {
-            return child;
-        }
-        else {
-            throw new Error('Child already has a parent.');
-        }
-    }
-    child.parent = parent;
     if (!parent.children.includes(child)) {
         parent.children.push(child);
     }
@@ -46878,7 +46869,6 @@ function scanRoots(uniqueVersions, getVersion) {
     const roots = new Set(uniqueVersions);
     for (const v of roots) {
         v.children = [];
-        v.parent = null;
         v.type = 'unknown';
     }
     for (const v of discoverAndLinkManifestChildren(roots, getVersion)) {

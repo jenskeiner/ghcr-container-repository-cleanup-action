@@ -45776,15 +45776,6 @@ function linkVersions(parent, child) {
     if (parent === child) {
         throw new Error('Cannot link a node to itself.');
     }
-    if (child.parent) {
-        if (child.parent === parent) {
-            return child;
-        }
-        else {
-            throw new Error('Child already has a parent.');
-        }
-    }
-    child.parent = parent;
     if (!parent.children.includes(child)) {
         parent.children.push(child);
     }
@@ -45882,7 +45873,6 @@ function scanRoots(uniqueVersions, getVersion) {
     const roots = new Set(uniqueVersions);
     for (const v of roots) {
         v.children = [];
-        v.parent = null;
         v.type = 'unknown';
     }
     for (const v of discoverAndLinkManifestChildren(roots, getVersion)) {
@@ -46401,7 +46391,7 @@ class CleanupAction {
                 const roots = this.repo.getRoots();
                 for (const r of roots) {
                     renderTree(r, v => v.children, (v, prefix) => {
-                        core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`);
+                        core.info(`${v === r ? '- ' : '  '}${prefix} ${v}`);
                     });
                 }
             }
@@ -46557,7 +46547,7 @@ class CleanupAction {
                 const roots = scanRoots(new Set(versionsDelete), key => this.repo.getVersion(key));
                 for (const r of roots) {
                     renderTree(r, v => v.children, (v, prefix) => {
-                        core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`);
+                        core.info(`${v === r ? '- ' : '  '}${prefix} ${v}`);
                     });
                 }
             }

@@ -123,7 +123,6 @@ export function scanRoots(
 
   for (const v of roots) {
     v.children = []
-    v.parent = null
     v.type = 'unknown'
   }
 
