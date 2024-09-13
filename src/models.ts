@@ -1,3 +1,5 @@
+import { Node } from './tree'
+
 export type MediaType =
   | 'application/vnd.oci.image.manifest.v1+json'
   | 'application/vnd.oci.image.index.v1+json'
@@ -5,8 +7,8 @@ export type MediaType =
   | 'application/vnd.docker.distribution.manifest.v2+json'
 
 export interface ManifestReference {
-  mediaType: string
   digest: string
+  mediaType: string
 }
 
 export interface Manifest {
@@ -16,57 +18,35 @@ export interface Manifest {
   subject?: ManifestReference
 }
 
-export interface ManifestExt extends Manifest {
-  children: string[]
-}
-
-abstract class BaseManifest {
-  children: string[]
-
-  constructor(children: string[] = []) {
-    this.children = children
-  }
-}
-
-export class OCIImageManifestModel extends BaseManifest implements ManifestExt {
+export class OCIImageManifestModel implements Manifest {
   mediaType = 'application/vnd.oci.image.manifest.v1+json' as const
 
   constructor(data: Manifest) {
-    super()
     Object.assign(this, data)
   }
 }
 
-export class OCIImageIndexModel extends BaseManifest implements ManifestExt {
+export class OCIImageIndexModel implements Manifest {
   mediaType = 'application/vnd.oci.image.index.v1+json' as const
 
   constructor(data: Manifest) {
-    super(data.manifests ? data.manifests.map(manifest => manifest.digest) : [])
     Object.assign(this, data)
   }
 }
 
-export class DockerManifestListModel
-  extends BaseManifest
-  implements ManifestExt
-{
+export class DockerManifestListModel implements Manifest {
   mediaType =
     'application/vnd.docker.distribution.manifest.list.v2+json' as const
 
   constructor(data: Manifest) {
-    super(data.manifests ? data.manifests.map(manifest => manifest.digest) : [])
     Object.assign(this, data)
   }
 }
 
-export class DockerImageManifestModel
-  extends BaseManifest
-  implements ManifestExt
-{
+export class DockerImageManifestModel implements Manifest {
   mediaType = 'application/vnd.docker.distribution.manifest.v2+json' as const
 
   constructor(data: Manifest) {
-    super()
     Object.assign(this, data)
   }
 }
@@ -91,7 +71,11 @@ export class PackageVersionMetadataModel implements PackageVersionMetadata {
   }
 }
 
-export interface PackageVersion {
+export interface PackageMetadataHolder {
+  metadata: PackageVersionMetadata
+}
+
+export interface PackageVersion extends PackageMetadataHolder {
   id: number
   name: string
   url: string
@@ -99,26 +83,31 @@ export interface PackageVersion {
   created_at: string
   updated_at: string
   html_url: string
-  metadata: PackageVersionMetadata
 }
 
 export type PackageVersionType =
   | 'multi-arch image'
   | 'single-arch image'
-  | 'attestation root'
-  | 'attestation child'
-  | 'Docker attestation'
+  | 'attestation'
   | 'unknown'
 
-export interface PackageVersionExt extends PackageVersion {
-  get is_attestation(): boolean
-  children: PackageVersionExt[]
-  parent: PackageVersionExt | null
-  type: PackageVersionType
-  manifest: ManifestExt | undefined
+export interface ManifestHolder {
+  manifest: Manifest
 }
 
-export class PackageVersionModel implements PackageVersionExt {
+export interface PackageVersionExtProperties<T extends Node<T>>
+  extends Node<T>,
+    ManifestHolder {
+  type: PackageVersionType
+}
+
+export interface PackageVersionExt
+  extends PackageVersion,
+    PackageVersionExtProperties<PackageVersionExt> {
+  get is_attestation(): boolean
+}
+
+export class PackageVersionModel implements PackageVersion {
   id = 0
   name = ''
   url = ''
@@ -132,17 +121,32 @@ export class PackageVersionModel implements PackageVersionExt {
       tags: []
     }
   })
-  children: PackageVersionExt[] = []
-  parent: PackageVersionExt | null = null
-  type: PackageVersionType = 'unknown'
-  manifest: ManifestExt | undefined = undefined
 
   constructor(data: PackageVersion) {
     Object.assign(this, data)
   }
 
+  toString(): string {
+    return `{id=${this.id}, tags=${this.metadata.container.tags}}`
+  }
+}
+
+export class PackageVersionExtModel
+  extends PackageVersionModel
+  implements PackageVersionExt
+{
+  children: PackageVersionExt[] = []
+  parent: PackageVersionExt | null = null
+  type: PackageVersionType = 'unknown'
+  manifest: Manifest
+
+  constructor(data: PackageVersion, manifest: Manifest) {
+    super(data)
+    this.manifest = manifest
+  }
+
   get is_attestation(): boolean {
-    return this.type === 'attestation root' || this.type === 'attestation child'
+    return this.type === 'attestation'
   }
 
   toString(): string {

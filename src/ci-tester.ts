@@ -5,8 +5,8 @@
 import stdio from 'stdio'
 import fs from 'fs'
 import * as core from '@actions/core'
-import { Config } from './config.js'
-import { GithubPackageRepo } from './github-package.js'
+import { Config } from './config'
+import { GithubPackageRepo } from './github-package'
 import { SpawnSyncOptionsWithStringEncoding, spawnSync } from 'child_process'
 
 function assertString(input: unknown): asserts input is string {

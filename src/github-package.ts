@@ -1,167 +1,150 @@
 import * as core from '@actions/core'
-import { Config } from './config.js'
+import { Config } from './config'
 
 import axios, { AxiosInstance, isAxiosError, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
-import { isValidChallenge, parseChallenge } from './utils.js'
-import { parseManifest, parsePackageVersion } from './parser.js'
+import { isValidChallenge, parseChallenge } from './utils'
+import { parseManifest, parsePackageVersion } from './parser'
 import {
   OCIImageIndexModel,
   OCIImageManifestModel,
   DockerImageManifestModel,
   DockerManifestListModel,
   Manifest,
+  PackageVersionType,
   PackageVersionExt,
-  ManifestExt
-} from './models.js'
+  PackageVersionExtModel,
+  ManifestHolder,
+  PackageMetadataHolder
+} from './models'
+import { visit, linkVersions, Node } from './tree'
 
-function visit(
-  version: PackageVersionExt,
-  fn: (v: PackageVersionExt) => void
-): void {
-  // Visit version.
-  fn(version)
+/**
+ * For each version in the given set of versions, finds children of the version via the `children` property of the manifest.
+ *
+ * @param versions  The set of versions to find children for.
+ * @param getVersion  A function that returns a version for a given key.
+ * @returns
+ */
+export function getManifestChildren<T extends ManifestHolder>(v: T): string[] {
+  return v.manifest.manifests
+    ? v.manifest.manifests.map(manifest => manifest.digest)
+    : []
+}
 
-  // Visit children.
-  for (const child of version.children) {
-    visit(child, fn)
+export function discoverAndLinkManifestChildren<
+  T extends ManifestHolder & Node<T>
+>(versions: Set<T>, getVersion: (key: string | number) => T | undefined): T[] {
+  return [...versions]
+    .map(v0 => [v0, getManifestChildren(v0)] as [T, string[]])
+    .map(([v0, ds]) =>
+      ds
+        .map(d => getVersion(d))
+        .filter(v1 => v1 !== undefined)
+        .map(v1 => linkVersions(v0, v1))
+    )
+    .reduce((vs1, vs2) => vs1.concat(vs2), [])
+}
+
+export function discoverAndLinkReferrers<T extends ManifestHolder & Node<T>>(
+  versions: Set<T>,
+  getVersion: (key: string | number) => T | undefined
+): T[] {
+  return [...versions]
+    .map(v0 => [v0, v0.manifest.subject?.digest] as [T, string | undefined])
+    .filter(([_v0, d]) => d !== undefined)
+    .map(([v0, d]) => [v0, getVersion(d as string)] as [T, T | undefined])
+    .filter(([_v0, v1]) => v1 !== undefined)
+    .map(([v0, v1]) => {
+      linkVersions(v1 as T, v0)
+      return v0
+    })
+}
+
+export function discoverAndLinkReferrerTags<
+  T extends PackageMetadataHolder & Node<T>
+>(versions: Set<T>, getVersion: (key: string | number) => T | undefined): T[] {
+  return [...versions]
+    .map(
+      v0 =>
+        [
+          v0,
+          v0.metadata.container.tags
+            .map(t => getVersion(t.replace('-', ':')))
+            .filter(v1 => v1 !== undefined && v1 !== v0 && versions.has(v1))
+        ] as [T, T[]]
+    )
+    .map(([v0, vs]) => vs.map(v1 => [v0, v1] as [T, T]))
+    .reduce((vs1, vs2) => vs1.concat(vs2), [])
+    .map(([v0, v1]) => {
+      linkVersions(v1, v0)
+      return v0
+    })
+}
+
+export function getArtifactType(v: PackageVersionExt): PackageVersionType {
+  const m = v.manifest
+
+  if (m.layers) {
+    // Manifest with layers.
+
+    // Docker build attestations attach directly to the image index as manifests.
+    // Check if the manifest is an attestation by checking if all layers' mediaType is application/vnd.in-toto+json.
+    if (m.layers.every(l => l.mediaType === 'application/vnd.in-toto+json')) {
+      return 'attestation'
+    }
+
+    // If it's not an attestation, then it's a regular single-architecture image.
+    return 'single-arch image'
   }
+
+  // Check if an attestation by checking if `subject` is defined.
+  if (m.subject) {
+    return 'attestation'
+  }
+
+  // Check if an attestation by checking the referrers tag schema, that is if the tag is in the form of `sha256-<digest>`.
+  if (
+    v.metadata.container.tags.some(t => RegExp(/^sha256-[a-f0-9]{64}$/).exec(t))
+  ) {
+    return 'attestation'
+  }
+
+  // If it's not an attestation, then it's a multi-architecture image if it has child manifests. Otherwise, it's unknown.
+  return m.manifests && m.manifests.length > 0 ? 'multi-arch image' : 'unknown'
 }
 
 export function scanRoots(
   uniqueVersions: Set<PackageVersionExt>,
   getVersion: (key: string | number) => PackageVersionExt | undefined
 ): Set<PackageVersionExt> {
-  // Holds versions known to not be roots.
-  const nonRoots = new Set<PackageVersionExt>()
+  // Start with all versions as roots.
+  const roots = new Set(uniqueVersions)
 
-  for (const v of uniqueVersions) {
+  for (const v of roots) {
     v.children = []
     v.parent = null
     v.type = 'unknown'
   }
 
-  // Loop over all versions.
-  for (const v of uniqueVersions) {
-    // Manifest should have been initialized.
-    if (v.manifest) {
-      // Loop over all digests of child manifests.
-      for (const child_digest of v.manifest.children) {
-        // Get the version for the child digest.
-        const child = getVersion(child_digest)
-
-        // Check if the child actually exists.
-        if (child && uniqueVersions.has(child)) {
-          // Add child to v's children.
-          v.children.push(child)
-
-          // The child is not a root version, as per definition.
-          nonRoots.add(child)
-
-          // Add backward reference from child to parent.
-          child.parent = v
-        }
-      }
-    }
-  }
-
-  // Determine preliminary roots.
-  const roots = new Set(uniqueVersions)
-  for (const v of nonRoots) {
+  for (const v of discoverAndLinkManifestChildren(roots, getVersion)) {
     roots.delete(v)
   }
 
-  nonRoots.clear()
-
-  for (const r of roots) {
-    const m = r.manifest
-
-    if (m) {
-      // Check for referrer.
-      const s = m.subject
-      if (s) {
-        // This manifest refers to another manifest.
-        const v = getVersion(s.digest)
-        if (v) {
-          v.children.push(r)
-          nonRoots.add(r)
-          r.parent = v
-        }
-      }
-    }
+  for (const v of discoverAndLinkReferrers(roots, getVersion)) {
+    roots.delete(v)
   }
 
-  for (const v of nonRoots) {
+  // Remove GitHub attestations from root.
+  for (const v of discoverAndLinkReferrerTags(roots, getVersion)) {
     roots.delete(v)
   }
 
   // Set the type for each version.
-  for (const v of uniqueVersions) {
-    if (v.children.length > 0) {
-      v.type = 'multi-arch image'
-      continue
-    }
-
-    const m = v.manifest
-    if (m) {
-      if (
-        m.layers &&
-        m.layers.length === 1 &&
-        m.layers[0].mediaType === 'application/vnd.in-toto+json'
-      ) {
-        v.type = 'Docker attestation'
-      } else if (m.subject) {
-        visit(v, v0 => {
-          v0.type = 'attestation child'
-        })
-        v.type = 'attestation root'
-      } else {
-        v.type = 'single-arch image'
-      }
-    } else {
-      v.type = 'unknown'
-    }
-  }
-
-  // Up to here, we have ignored GitHub attestation versions. They are linked to the version
-  // they attest via a tag that is equivalent to the digest of the attested version. Each attestation
-  // version should be removed from the roots and added to the children of the attested version.
-  // Also, the type should be adjusted for the attestation version and its children.
-
-  nonRoots.clear()
-
-  // Loop over all roots.
-  for (const r of roots) {
-    // Loop over all tags for the root.
-    for (const t of r.metadata.container.tags) {
-      // Replace - with : in the tag. If the version is an attestation,
-      // this would be the digest of the attested version.
-      const d = t.replace('-', ':')
-
-      // Get the version for the potential digest.
-      const v = getVersion(d)
-
-      // If the version exists and is not identical to r, then r is a GitHub attestation.
-      if (v && v !== r && uniqueVersions.has(v)) {
-        // Recursively set the is_attestation property to true.
-        visit(r, v0 => {
-          v0.type = 'attestation child'
-        })
-        r.type = 'attestation root'
-        r.parent = v
-
-        // Add attestation r to children of v.
-        v.children.push(r)
-
-        // Add r to non-roots.
-        nonRoots.add(r)
-      }
-    }
-  }
-
-  // Remove GitHub attestations from root.
-  for (const v of nonRoots) {
-    roots.delete(v)
+  for (const v of roots) {
+    visit(v, _v => {
+      _v.type = getArtifactType(_v)
+    })
   }
 
   return roots
@@ -333,9 +316,9 @@ export class GithubPackageRepo {
       fetch_params
     )) {
       for (const packageVersion of response.data) {
-        const version = parsePackageVersion(JSON.stringify(packageVersion))
-        const manifest = await this.fetchManifest(version.name)
-        version.manifest = manifest
+        const version0 = parsePackageVersion(JSON.stringify(packageVersion))
+        const manifest = await this.fetchManifest(version0.name)
+        const version = new PackageVersionExtModel(version0, manifest)
         fn(version)
       }
     }
@@ -472,7 +455,7 @@ export class GithubPackageRepo {
    * @param digest - The digest of the manifest to retrieve.
    * @returns A Promise that resolves to the retrieved manifest.
    */
-  private async fetchManifest(digest: string): Promise<ManifestExt> {
+  private async fetchManifest(digest: string): Promise<Manifest> {
     // Retrieve the manifest.
     const response: AxiosResponse<Manifest> = await this.axios.get<Manifest>(
       `/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`
@@ -484,7 +467,7 @@ export class GithubPackageRepo {
       | DockerImageManifestModel
       | DockerManifestListModel = parseManifest(JSON.stringify(response?.data))
 
-    return manifest as ManifestExt
+    return manifest as Manifest
   }
 
   /**

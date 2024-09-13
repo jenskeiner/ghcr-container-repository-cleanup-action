@@ -4,7 +4,7 @@ import {
   Manifest,
   PackageVersionMetadata,
   PackageVersion
-} from './models.js'
+} from './models'
 
 export const manifestReferenceSchema: JTDSchemaType<ManifestReference> = {
   properties: {

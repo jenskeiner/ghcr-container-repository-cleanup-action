@@ -39598,13 +39598,13 @@ function wrappy (fn, cb) {
 /***/ ((module, __unused_webpack___webpack_exports__, __nccwpck_require__) => {
 
 __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __webpack_async_result__) => { try {
-/* harmony import */ var _main_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2119);
+/* harmony import */ var _main__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(2119);
 /**
  * The entrypoint for the action.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-floating-promises
-await (0,_main_js__WEBPACK_IMPORTED_MODULE_0__/* .run */ .K)();
+await (0,_main__WEBPACK_IMPORTED_MODULE_0__/* .run */ .K)();
 
 __webpack_async_result__();
 } catch(e) { __webpack_async_result__(e); } }, 1);
@@ -45631,37 +45631,27 @@ const packageVersionSchema = {
 };
 
 ;// CONCATENATED MODULE: ./src/models.ts
-class BaseManifest {
-    children;
-    constructor(children = []) {
-        this.children = children;
-    }
-}
-class OCIImageManifestModel extends BaseManifest {
+class OCIImageManifestModel {
     mediaType = 'application/vnd.oci.image.manifest.v1+json';
     constructor(data) {
-        super();
         Object.assign(this, data);
     }
 }
-class OCIImageIndexModel extends BaseManifest {
+class OCIImageIndexModel {
     mediaType = 'application/vnd.oci.image.index.v1+json';
     constructor(data) {
-        super(data.manifests ? data.manifests.map(manifest => manifest.digest) : []);
         Object.assign(this, data);
     }
 }
-class DockerManifestListModel extends BaseManifest {
+class DockerManifestListModel {
     mediaType = 'application/vnd.docker.distribution.manifest.list.v2+json';
     constructor(data) {
-        super(data.manifests ? data.manifests.map(manifest => manifest.digest) : []);
         Object.assign(this, data);
     }
 }
-class DockerImageManifestModel extends BaseManifest {
+class DockerImageManifestModel {
     mediaType = 'application/vnd.docker.distribution.manifest.v2+json';
     constructor(data) {
-        super();
         Object.assign(this, data);
     }
 }
@@ -45688,15 +45678,24 @@ class PackageVersionModel {
             tags: []
         }
     });
-    children = [];
-    parent = null;
-    type = 'unknown';
-    manifest = undefined;
     constructor(data) {
         Object.assign(this, data);
     }
+    toString() {
+        return `{id=${this.id}, tags=${this.metadata.container.tags}}`;
+    }
+}
+class PackageVersionExtModel extends PackageVersionModel {
+    children = [];
+    parent = null;
+    type = 'unknown';
+    manifest;
+    constructor(data, manifest) {
+        super(data);
+        this.manifest = manifest;
+    }
     get is_attestation() {
-        return this.type === 'attestation root' || this.type === 'attestation child';
+        return this.type === 'attestation';
     }
     toString() {
         return `{type=${this.type}, id=${this.id}, tags=${this.metadata.container.tags}}`;
@@ -45750,132 +45749,157 @@ function parsePackageVersion(jsonString) {
     return new PackageVersionModel(data);
 }
 
+;// CONCATENATED MODULE: ./src/tree.ts
+function renderTree(root, getChildren, renderNode) {
+    function renderSubtree(node, thisPrefix, nextPrefix) {
+        // Render the current node
+        renderNode(node, thisPrefix);
+        // Get children of the current node
+        const children = getChildren(node);
+        if (children) {
+            // Iterate through children
+            for (let i = 0; i < children.length; i++) {
+                const child = children[i];
+                const isLastChild = i === children.length - 1;
+                // Prepare the prefix for the child
+                const childPrefix = nextPrefix + (isLastChild ? ' └─' : ' ├─');
+                const childNextPrefix = nextPrefix + (isLastChild ? '   ' : ' │ ');
+                // Recursively render the child's subtree
+                renderSubtree(child, childPrefix, childNextPrefix);
+            }
+        }
+    }
+    // Start rendering from the root
+    renderSubtree(root, '', '');
+}
+function linkVersions(parent, child) {
+    if (parent === child) {
+        throw new Error('Cannot link a node to itself.');
+    }
+    if (child.parent) {
+        if (child.parent === parent) {
+            return child;
+        }
+        else {
+            throw new Error('Child already has a parent.');
+        }
+    }
+    child.parent = parent;
+    if (!parent.children.includes(child)) {
+        parent.children.push(child);
+    }
+    return child;
+}
+function visit(node, fn) {
+    // Visit version.
+    fn(node);
+    // Visit children.
+    for (const child of node.children) {
+        visit(child, fn);
+    }
+}
+
 ;// CONCATENATED MODULE: ./src/github-package.ts
 
 
 
 
 
-function visit(version, fn) {
-    // Visit version.
-    fn(version);
-    // Visit children.
-    for (const child of version.children) {
-        visit(child, fn);
+
+
+/**
+ * For each version in the given set of versions, finds children of the version via the `children` property of the manifest.
+ *
+ * @param versions  The set of versions to find children for.
+ * @param getVersion  A function that returns a version for a given key.
+ * @returns
+ */
+function getManifestChildren(v) {
+    return v.manifest.manifests
+        ? v.manifest.manifests.map(manifest => manifest.digest)
+        : [];
+}
+function discoverAndLinkManifestChildren(versions, getVersion) {
+    return [...versions]
+        .map(v0 => [v0, getManifestChildren(v0)])
+        .map(([v0, ds]) => ds
+        .map(d => getVersion(d))
+        .filter(v1 => v1 !== undefined)
+        .map(v1 => linkVersions(v0, v1)))
+        .reduce((vs1, vs2) => vs1.concat(vs2), []);
+}
+function discoverAndLinkReferrers(versions, getVersion) {
+    return [...versions]
+        .map(v0 => [v0, v0.manifest.subject?.digest])
+        .filter(([_v0, d]) => d !== undefined)
+        .map(([v0, d]) => [v0, getVersion(d)])
+        .filter(([_v0, v1]) => v1 !== undefined)
+        .map(([v0, v1]) => {
+        linkVersions(v1, v0);
+        return v0;
+    });
+}
+function discoverAndLinkReferrerTags(versions, getVersion) {
+    return [...versions]
+        .map(v0 => [
+        v0,
+        v0.metadata.container.tags
+            .map(t => getVersion(t.replace('-', ':')))
+            .filter(v1 => v1 !== undefined && v1 !== v0 && versions.has(v1))
+    ])
+        .map(([v0, vs]) => vs.map(v1 => [v0, v1]))
+        .reduce((vs1, vs2) => vs1.concat(vs2), [])
+        .map(([v0, v1]) => {
+        linkVersions(v1, v0);
+        return v0;
+    });
+}
+function getArtifactType(v) {
+    const m = v.manifest;
+    if (m.layers) {
+        // Manifest with layers.
+        // Docker build attestations attach directly to the image index as manifests.
+        // Check if the manifest is an attestation by checking if all layers' mediaType is application/vnd.in-toto+json.
+        if (m.layers.every(l => l.mediaType === 'application/vnd.in-toto+json')) {
+            return 'attestation';
+        }
+        // If it's not an attestation, then it's a regular single-architecture image.
+        return 'single-arch image';
     }
+    // Check if an attestation by checking if `subject` is defined.
+    if (m.subject) {
+        return 'attestation';
+    }
+    // Check if an attestation by checking the referrers tag schema, that is if the tag is in the form of `sha256-<digest>`.
+    if (v.metadata.container.tags.some(t => RegExp(/^sha256-[a-f0-9]{64}$/).exec(t))) {
+        return 'attestation';
+    }
+    // If it's not an attestation, then it's a multi-architecture image if it has child manifests. Otherwise, it's unknown.
+    return m.manifests && m.manifests.length > 0 ? 'multi-arch image' : 'unknown';
 }
 function scanRoots(uniqueVersions, getVersion) {
-    // Holds versions known to not be roots.
-    const nonRoots = new Set();
-    for (const v of uniqueVersions) {
+    // Start with all versions as roots.
+    const roots = new Set(uniqueVersions);
+    for (const v of roots) {
         v.children = [];
         v.parent = null;
         v.type = 'unknown';
     }
-    // Loop over all versions.
-    for (const v of uniqueVersions) {
-        // Manifest should have been initialized.
-        if (v.manifest) {
-            // Loop over all digests of child manifests.
-            for (const child_digest of v.manifest.children) {
-                // Get the version for the child digest.
-                const child = getVersion(child_digest);
-                // Check if the child actually exists.
-                if (child && uniqueVersions.has(child)) {
-                    // Add child to v's children.
-                    v.children.push(child);
-                    // The child is not a root version, as per definition.
-                    nonRoots.add(child);
-                    // Add backward reference from child to parent.
-                    child.parent = v;
-                }
-            }
-        }
-    }
-    // Determine preliminary roots.
-    const roots = new Set(uniqueVersions);
-    for (const v of nonRoots) {
+    for (const v of discoverAndLinkManifestChildren(roots, getVersion)) {
         roots.delete(v);
     }
-    nonRoots.clear();
-    for (const r of roots) {
-        const m = r.manifest;
-        if (m) {
-            // Check for referrer.
-            const s = m.subject;
-            if (s) {
-                // This manifest refers to another manifest.
-                const v = getVersion(s.digest);
-                if (v) {
-                    v.children.push(r);
-                    nonRoots.add(r);
-                    r.parent = v;
-                }
-            }
-        }
+    for (const v of discoverAndLinkReferrers(roots, getVersion)) {
+        roots.delete(v);
     }
-    for (const v of nonRoots) {
+    // Remove GitHub attestations from root.
+    for (const v of discoverAndLinkReferrerTags(roots, getVersion)) {
         roots.delete(v);
     }
     // Set the type for each version.
-    for (const v of uniqueVersions) {
-        if (v.children.length > 0) {
-            v.type = 'multi-arch image';
-            continue;
-        }
-        const m = v.manifest;
-        if (m) {
-            if (m.layers &&
-                m.layers.length === 1 &&
-                m.layers[0].mediaType === 'application/vnd.in-toto+json') {
-                v.type = 'Docker attestation';
-            }
-            else if (m.subject) {
-                visit(v, v0 => {
-                    v0.type = 'attestation child';
-                });
-                v.type = 'attestation root';
-            }
-            else {
-                v.type = 'single-arch image';
-            }
-        }
-        else {
-            v.type = 'unknown';
-        }
-    }
-    // Up to here, we have ignored GitHub attestation versions. They are linked to the version
-    // they attest via a tag that is equivalent to the digest of the attested version. Each attestation
-    // version should be removed from the roots and added to the children of the attested version.
-    // Also, the type should be adjusted for the attestation version and its children.
-    nonRoots.clear();
-    // Loop over all roots.
-    for (const r of roots) {
-        // Loop over all tags for the root.
-        for (const t of r.metadata.container.tags) {
-            // Replace - with : in the tag. If the version is an attestation,
-            // this would be the digest of the attested version.
-            const d = t.replace('-', ':');
-            // Get the version for the potential digest.
-            const v = getVersion(d);
-            // If the version exists and is not identical to r, then r is a GitHub attestation.
-            if (v && v !== r && uniqueVersions.has(v)) {
-                // Recursively set the is_attestation property to true.
-                visit(r, v0 => {
-                    v0.type = 'attestation child';
-                });
-                r.type = 'attestation root';
-                r.parent = v;
-                // Add attestation r to children of v.
-                v.children.push(r);
-                // Add r to non-roots.
-                nonRoots.add(r);
-            }
-        }
-    }
-    // Remove GitHub attestations from root.
-    for (const v of nonRoots) {
-        roots.delete(v);
+    for (const v of roots) {
+        visit(v, _v => {
+            _v.type = getArtifactType(_v);
+        });
     }
     return roots;
 }
@@ -46018,9 +46042,9 @@ class GithubPackageRepo {
         // Iterate over all package versions.
         for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
             for (const packageVersion of response.data) {
-                const version = parsePackageVersion(JSON.stringify(packageVersion));
-                const manifest = await this.fetchManifest(version.name);
-                version.manifest = manifest;
+                const version0 = parsePackageVersion(JSON.stringify(packageVersion));
+                const manifest = await this.fetchManifest(version0.name);
+                const version = new PackageVersionExtModel(version0, manifest);
                 fn(version);
             }
         }
@@ -46228,30 +46252,6 @@ class GithubPackageRepo {
             }
         }
     }
-}
-
-;// CONCATENATED MODULE: ./src/tree.ts
-function renderTree(root, getChildren, renderNode) {
-    function renderSubtree(node, thisPrefix, nextPrefix) {
-        // Render the current node
-        renderNode(node, thisPrefix);
-        // Get children of the current node
-        const children = getChildren(node);
-        if (children) {
-            // Iterate through children
-            for (let i = 0; i < children.length; i++) {
-                const child = children[i];
-                const isLastChild = i === children.length - 1;
-                // Prepare the prefix for the child
-                const childPrefix = nextPrefix + (isLastChild ? ' └─' : ' ├─');
-                const childNextPrefix = nextPrefix + (isLastChild ? '   ' : ' │ ');
-                // Recursively render the child's subtree
-                renderSubtree(child, childPrefix, childNextPrefix);
-            }
-        }
-    }
-    // Start rendering from the root
-    renderSubtree(root, '', '');
 }
 
 ;// CONCATENATED MODULE: ./src/main.ts
