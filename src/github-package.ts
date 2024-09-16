@@ -123,7 +123,6 @@ export function scanRoots(
 
   for (const v of roots) {
     v.children = []
-    v.parent = null
     v.type = 'unknown'
   }
 
@@ -229,7 +228,7 @@ export class GithubPackageRepo {
       if (token) {
         return token
       } else {
-        throw new Error(`ghcr.io login failed: ${token.response.data}`)
+        throw new Error(`ghcr.io login failed: ${tokenResponse.data}`)
       }
     } else {
       throw new Error(`invalid www-authenticate challenge ${challenge}`)
