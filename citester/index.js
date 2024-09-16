@@ -46952,7 +46952,7 @@ class GithubPackageRepo {
                 return token;
             }
             else {
-                throw new Error(`ghcr.io login failed: ${token.response.data}`);
+                throw new Error(`ghcr.io login failed: ${tokenResponse.data}`);
             }
         }
         else {

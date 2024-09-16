@@ -12,9 +12,13 @@ import {
   discoverAndLinkReferrers,
   discoverAndLinkReferrerTags,
   getArtifactType,
-  scanRoots
+  scanRoots,
+  GithubPackageRepo
 } from './github-package'
 import { Node } from './tree'
+import axios, { AxiosInstance, AxiosStatic } from 'axios'
+import axiosRetry, { IAxiosRetryConfig } from 'axios-retry'
+import { Config } from './config'
 
 describe('getManifestChildren', () => {
   it('should return an empty array for a manifest without manifests property', () => {
@@ -948,5 +952,125 @@ describe('scanRoots', () => {
     expect(child2.type).toBe('multi-arch image')
     expect(grandchild.type).toBe('single-arch image')
     expect(attestation.type).toBe('attestation')
+  })
+})
+
+jest.mock('axios')
+jest.mock('axios-retry')
+
+const mockedAxios = axios as jest.Mocked<typeof axios>
+const mockedAxiosRetry = axiosRetry as jest.MockedFunction<typeof axiosRetry>
+
+describe('GithubPackageRepo', () => {
+  let githubPackageRepo: GithubPackageRepo
+  let mockConfig: Config
+  let mockAxiosInstance: jest.Mocked<typeof axios>
+
+  beforeEach(() => {
+    mockConfig = {
+      token: 'mock-token',
+      owner: 'mock-owner',
+      package: 'mock-package'
+    } as Config
+
+    mockAxiosInstance = {
+      create: jest.fn(),
+      get: jest.fn(),
+      defaults: {
+        headers: {
+          common: {}
+        }
+      },
+      interceptors: {
+        request: { use: jest.fn() },
+        response: { use: jest.fn() }
+      }
+    } as unknown as jest.Mocked<typeof axios>
+
+    mockedAxios.create.mockReturnValue(mockAxiosInstance)
+    mockedAxiosRetry.mockImplementation(
+      (
+        _axiosInstance: AxiosStatic | AxiosInstance,
+        _axiosRetryConfig?: IAxiosRetryConfig | undefined
+      ) => {
+        return {
+          interceptors: {
+            request: { use: jest.fn() },
+            response: { use: jest.fn() }
+          },
+          requestInterceptorId: 0,
+          responseInterceptorId: 1
+        }
+      }
+    )
+
+    githubPackageRepo = new GithubPackageRepo(mockConfig)
+  })
+
+  describe('handleAuthenticationChallenge', () => {
+    it('should handle a valid authentication challenge and return a token', async () => {
+      const mockChallenge =
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
+      const mockToken = 'mock-access-token'
+
+      const mockAuthAxios = {
+        get: jest.fn().mockResolvedValue({ data: { token: mockToken } })
+      }
+      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+
+      const result = await (
+        githubPackageRepo as any
+      ).handleAuthenticationChallenge(mockChallenge)
+
+      expect(mockAuthAxios.get).toHaveBeenCalledWith(
+        'https://ghcr.io/token?service=ghcr.io&scope=repository:user/repo:pull',
+        {
+          auth: {
+            username: 'token',
+            password: 'mock-token'
+          }
+        }
+      )
+      expect(result).toBe(mockToken)
+    })
+
+    it('should throw an error for an invalid authentication challenge', async () => {
+      const invalidChallenge = 'Invalid challenge'
+
+      await expect(
+        (githubPackageRepo as any).handleAuthenticationChallenge(
+          invalidChallenge
+        )
+      ).rejects.toThrow('invalid www-authenticate challenge Invalid challenge')
+    })
+
+    it('should throw an error when login fails', async () => {
+      const mockChallenge =
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
+
+      const mockAuthAxios = {
+        get: jest.fn().mockResolvedValue({ data: {} })
+      }
+      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+
+      await expect(
+        (githubPackageRepo as any).handleAuthenticationChallenge(mockChallenge)
+      ).rejects.toThrow('ghcr.io login failed: [object Object]')
+    })
+
+    it('should throw an error when the token request fails', async () => {
+      const mockChallenge =
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
+      const mockError = new Error('Request failed')
+
+      const mockAuthAxios = {
+        get: jest.fn().mockRejectedValue(mockError)
+      }
+      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+
+      await expect(
+        (githubPackageRepo as any).handleAuthenticationChallenge(mockChallenge)
+      ).rejects.toThrow('Request failed')
+    })
   })
 })
