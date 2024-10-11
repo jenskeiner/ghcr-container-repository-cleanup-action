@@ -16,9 +16,11 @@ import {
   GithubPackageRepo
 } from './github-package'
 import { Node } from './tree'
-import axios, { AxiosInstance, AxiosStatic } from 'axios'
-import axiosRetry, { IAxiosRetryConfig } from 'axios-retry'
+import axios, { AxiosError } from 'axios'
 import { Config } from './config'
+import { jest, expect } from '@jest/globals'
+
+jest.mock('axios')
 
 describe('getManifestChildren', () => {
   it('should return an empty array for a manifest without manifests property', () => {
@@ -284,7 +286,7 @@ describe('discoverAndLinkReferrers', () => {
 
   it('should return an empty array for an empty set of versions', () => {
     const versions = new Set<TestVersion>()
-    const getVersion = jest.fn()
+    const getVersion = jest.fn() as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -296,7 +298,7 @@ describe('discoverAndLinkReferrers', () => {
     const v1 = createTestVersion('v1')
     const v2 = createTestVersion('v2')
     const versions = new Set([v1, v2])
-    const getVersion = jest.fn()
+    const getVersion = jest.fn() as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -307,7 +309,7 @@ describe('discoverAndLinkReferrers', () => {
   it('should not link versions with non-existent subjects', () => {
     const v1 = createTestVersion('v1', 'non-existent')
     const versions = new Set([v1])
-    const getVersion = jest.fn().mockReturnValue(undefined)
+    const getVersion = jest.fn().mockReturnValue(undefined) as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -319,7 +321,7 @@ describe('discoverAndLinkReferrers', () => {
     const v1 = createTestVersion('v1', 'subject1')
     const v2 = createTestVersion('v2')
     const versions = new Set([v1, v2])
-    const getVersion = jest.fn().mockReturnValue(v2)
+    const getVersion = jest.fn().mockReturnValue(v2) as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -333,7 +335,7 @@ describe('discoverAndLinkReferrers', () => {
     const v2 = createTestVersion('v2', 'subject1')
     const v3 = createTestVersion('v3')
     const versions = new Set([v1, v2, v3])
-    const getVersion = jest.fn().mockReturnValue(v3)
+    const getVersion = jest.fn().mockReturnValue(v3) as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -350,7 +352,7 @@ describe('discoverAndLinkReferrers', () => {
     const versions = new Set([v1, v2])
     const getVersion = jest
       .fn()
-      .mockImplementation(id => (id === 'v1' ? v1 : v2))
+      .mockImplementation(id => (id === 'v1' ? v1 : v2)) as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -381,7 +383,7 @@ describe('discoverAndLinkReferrers', () => {
         case 'v5':
           return v5
       }
-    })
+    }) as any
 
     const result = discoverAndLinkReferrers(versions, getVersion)
 
@@ -662,7 +664,7 @@ describe('scanRoots', () => {
     }) as PackageVersionExt
 
   let uniqueVersions: Set<PackageVersionExt>
-  let getVersion: jest.Mock
+  let getVersion: any
 
   beforeEach(() => {
     uniqueVersions = new Set()
@@ -701,7 +703,9 @@ describe('scanRoots', () => {
 
     uniqueVersions.add(parent)
     uniqueVersions.add(child)
-    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+    getVersion.mockImplementation((key: string | number) =>
+      key === 'child' ? child : undefined
+    )
 
     const result = scanRoots(uniqueVersions, getVersion)
     expect(result.size).toBe(1)
@@ -719,7 +723,7 @@ describe('scanRoots', () => {
 
     uniqueVersions.add(subject)
     uniqueVersions.add(referrer)
-    getVersion.mockImplementation(key =>
+    getVersion.mockImplementation((key: string | number) =>
       key === 'subject' ? subject : undefined
     )
 
@@ -747,7 +751,7 @@ describe('scanRoots', () => {
 
     uniqueVersions.add(target)
     uniqueVersions.add(referrer)
-    getVersion.mockImplementation(key =>
+    getVersion.mockImplementation((key: string | number) =>
       key === 'sha256:1234567890abcdef' ? target : undefined
     )
 
@@ -802,7 +806,7 @@ describe('scanRoots', () => {
     uniqueVersions.add(child2)
     uniqueVersions.add(attestation)
 
-    getVersion.mockImplementation(key => {
+    getVersion.mockImplementation((key: string | number) => {
       switch (key) {
         case 'child1':
           return child1
@@ -838,7 +842,9 @@ describe('scanRoots', () => {
     uniqueVersions.add(child)
     uniqueVersions.add(orphan)
 
-    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+    getVersion.mockImplementation((key: string | number) =>
+      key === 'child' ? child : undefined
+    )
 
     const result = scanRoots(uniqueVersions, getVersion)
     expect(result.size).toBe(2)
@@ -862,7 +868,9 @@ describe('scanRoots', () => {
     uniqueVersions.add(parent2)
     uniqueVersions.add(child)
 
-    getVersion.mockImplementation(key => (key === 'child' ? child : undefined))
+    getVersion.mockImplementation((key: string | number) =>
+      key === 'child' ? child : undefined
+    )
 
     const result = scanRoots(uniqueVersions, getVersion)
     expect(result.size).toBe(2)
@@ -885,7 +893,9 @@ describe('scanRoots', () => {
 
     for (const v of versions) uniqueVersions.add(v)
 
-    getVersion.mockImplementation(key => versions.find(v => v.name === key))
+    getVersion.mockImplementation((key: string | number) =>
+      versions.find(v => v.name === key)
+    )
 
     const result = scanRoots(uniqueVersions, getVersion)
     expect(result.size).toBe(1)
@@ -924,7 +934,7 @@ describe('scanRoots', () => {
     uniqueVersions.add(grandchild)
     uniqueVersions.add(attestation)
 
-    getVersion.mockImplementation(key => {
+    getVersion.mockImplementation((key: string | number) => {
       switch (key) {
         case 'child1':
           return child1
@@ -955,11 +965,12 @@ describe('scanRoots', () => {
   })
 })
 
-jest.mock('axios')
-jest.mock('axios-retry')
+const originalIsAxiosError =
+  jest.requireActual<typeof import('axios')>('axios').isAxiosError
+//jest.mock('axios-retry')
 
 const mockedAxios = axios as jest.Mocked<typeof axios>
-const mockedAxiosRetry = axiosRetry as jest.MockedFunction<typeof axiosRetry>
+//const mockedAxiosRetry = axiosRetry as jest.MockedFunction<typeof axiosRetry>
 
 describe('GithubPackageRepo', () => {
   let githubPackageRepo: GithubPackageRepo
@@ -988,7 +999,7 @@ describe('GithubPackageRepo', () => {
     } as unknown as jest.Mocked<typeof axios>
 
     mockedAxios.create.mockReturnValue(mockAxiosInstance)
-    mockedAxiosRetry.mockImplementation(
+    /*mockedAxiosRetry.mockImplementation(
       (
         _axiosInstance: AxiosStatic | AxiosInstance,
         _axiosRetryConfig?: IAxiosRetryConfig | undefined
@@ -999,10 +1010,10 @@ describe('GithubPackageRepo', () => {
             response: { use: jest.fn() }
           },
           requestInterceptorId: 0,
-          responseInterceptorId: 1
+          responseInterceptorId: 1,
         }
       }
-    )
+    )*/
 
     githubPackageRepo = new GithubPackageRepo(mockConfig)
   })
@@ -1013,16 +1024,16 @@ describe('GithubPackageRepo', () => {
         'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
       const mockToken = 'mock-access-token'
 
-      const mockAuthAxios = {
-        get: jest.fn().mockResolvedValue({ data: { token: mockToken } })
-      }
-      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+      mockAxiosInstance.get.mockResolvedValueOnce({
+        data: { token: mockToken }
+      })
 
       const result = await (
         githubPackageRepo as any
       ).handleAuthenticationChallenge(mockChallenge)
 
-      expect(mockAuthAxios.get).toHaveBeenCalledWith(
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
         'https://ghcr.io/token?service=ghcr.io&scope=repository:user/repo:pull',
         {
           auth: {
@@ -1048,10 +1059,7 @@ describe('GithubPackageRepo', () => {
       const mockChallenge =
         'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
 
-      const mockAuthAxios = {
-        get: jest.fn().mockResolvedValue({ data: {} })
-      }
-      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+      mockAxiosInstance.get.mockResolvedValueOnce({ data: {} })
 
       await expect(
         (githubPackageRepo as any).handleAuthenticationChallenge(mockChallenge)
@@ -1063,14 +1071,161 @@ describe('GithubPackageRepo', () => {
         'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/repo:pull"'
       const mockError = new Error('Request failed')
 
-      const mockAuthAxios = {
-        get: jest.fn().mockRejectedValue(mockError)
-      }
-      ;(axios.create as jest.Mock).mockReturnValueOnce(mockAuthAxios)
+      mockAxiosInstance.get.mockRejectedValueOnce(mockError)
 
       await expect(
         (githubPackageRepo as any).handleAuthenticationChallenge(mockChallenge)
       ).rejects.toThrow('Request failed')
+    })
+  })
+})
+
+describe('GithubPackageRepo2', () => {
+  let repo: GithubPackageRepo
+  let mockConfig: Config
+  let mockAxiosInstance: jest.Mocked<typeof axios>
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockedAxios.isAxiosError.mockImplementation(originalIsAxiosError)
+
+    mockConfig = {
+      token: 'mock-token',
+      owner: 'mock-owner',
+      package: 'mock-package'
+    } as Config
+
+    mockAxiosInstance = {
+      create: jest.fn(),
+      get: jest.fn(),
+      defaults: {
+        headers: {
+          common: {}
+        }
+      },
+      interceptors: {
+        request: { use: jest.fn() },
+        response: { use: jest.fn() }
+      }
+    } as unknown as jest.Mocked<typeof axios>
+
+    mockedAxios.create.mockReturnValue(mockAxiosInstance)
+
+    repo = new GithubPackageRepo(mockConfig)
+  })
+
+  describe('login', () => {
+    it('should succeed without needing to refresh token', async () => {
+      mockAxiosInstance.get.mockResolvedValueOnce({})
+
+      await expect(repo.login()).resolves.not.toThrow()
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+        '/v2/mock-owner/mock-package/tags/list'
+      )
+      expect(
+        mockAxiosInstance.defaults.headers.common.Authorization
+      ).toBeUndefined()
+    })
+
+    it('should handle 401 error and refresh token', async () => {
+      const mockChallenge =
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:mock-owner/mock-package:pull"'
+      const mockTokenResponse = { data: { token: 'new-token' } }
+      const error = new Error('Unauthorized') as AxiosError
+      error.isAxiosError = true
+      error.response = {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'www-authenticate': mockChallenge },
+        config: {},
+        data: {}
+      } as any
+
+      mockAxiosInstance.get
+        .mockRejectedValueOnce(error)
+        .mockResolvedValueOnce(mockTokenResponse)
+
+      await expect(repo.login()).resolves.not.toThrow()
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockAxiosInstance.get).toHaveBeenCalledTimes(2)
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+        '/v2/mock-owner/mock-package/tags/list'
+      )
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(mockAxiosInstance.get).toHaveBeenCalledWith(
+        'https://ghcr.io/token?service=ghcr.io&scope=repository:mock-owner/mock-package:pull',
+        expect.any(Object)
+      )
+      expect(mockAxiosInstance.defaults.headers.common.Authorization).toBe(
+        'Bearer new-token'
+      )
+    })
+
+    it('should throw error for invalid authentication challenge', async () => {
+      const invalidChallenge = 'Invalid challenge'
+      const error = new Error('Unauthorized') as AxiosError
+      error.isAxiosError = true
+      error.response = {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'www-authenticate': invalidChallenge },
+        config: {},
+        data: {}
+      } as any
+
+      mockAxiosInstance.get.mockRejectedValueOnce(error)
+
+      await expect(repo.login()).rejects.toThrow(
+        'invalid www-authenticate challenge Invalid challenge'
+      )
+    })
+
+    it('should throw error if token refresh fails', async () => {
+      const mockChallenge =
+        'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:mock-owner/mock-package:pull"'
+      const error = new Error('Unauthorized') as AxiosError
+      error.isAxiosError = true
+      error.response = {
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: { 'www-authenticate': mockChallenge },
+        config: {},
+        data: {}
+      } as any
+      mockAxiosInstance.get.mockRejectedValueOnce(error)
+
+      const mockTokenResponse = { data: {} } // No token in response
+      mockAxiosInstance.get.mockResolvedValueOnce(mockTokenResponse)
+
+      await expect(repo.login()).rejects.toThrow(
+        'ghcr.io login failed: [object Object]'
+      )
+    })
+
+    it('should throw error for non-401 errors', async () => {
+      const error = new Error('Unauthorized') as AxiosError
+      error.isAxiosError = true
+      error.response = {
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: {},
+        config: {},
+        data: {}
+      } as any
+      mockAxiosInstance.get.mockRejectedValueOnce(error)
+
+      mockedAxios.get.mockRejectedValueOnce(error)
+
+      await expect(repo.login()).rejects.toThrow(error)
+    })
+
+    it('should throw error for network errors', async () => {
+      mockAxiosInstance.get.mockRejectedValueOnce(new Error('Network Error'))
+
+      await expect(repo.login()).rejects.toThrow('Network Error')
     })
   })
 })

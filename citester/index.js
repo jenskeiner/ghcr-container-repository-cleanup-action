@@ -46981,6 +46981,9 @@ class GithubPackageRepo {
                     throw error;
                 }
             }
+            else {
+                throw error;
+            }
         }
     }
     async init() {
@@ -46993,6 +46996,18 @@ class GithubPackageRepo {
      */
     async fetchVersions(fn) {
         // Function to retrieve package versions.
+        const { fetch, fetch_params } = this.resolveFetchAndParams();
+        // Iterate over all package versions.
+        for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
+            for (const packageVersion of response.data) {
+                const version0 = parsePackageVersion(JSON.stringify(packageVersion));
+                const manifest = await this.fetchManifest(version0.name);
+                const version = new PackageVersionExtModel(version0, manifest);
+                fn(version);
+            }
+        }
+    }
+    resolveFetchAndParams() {
         let fetch;
         // Parameters for the function call.
         let fetch_params;
@@ -47025,15 +47040,7 @@ class GithubPackageRepo {
                 per_page: 100
             };
         }
-        // Iterate over all package versions.
-        for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
-            for (const packageVersion of response.data) {
-                const version0 = parsePackageVersion(JSON.stringify(packageVersion));
-                const manifest = await this.fetchManifest(version0.name);
-                const version = new PackageVersionExtModel(version0, manifest);
-                fn(version);
-            }
-        }
+        return { fetch, fetch_params };
     }
     addVersion(version) {
         this.versions.set(version.name, version);

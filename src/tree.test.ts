@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals'
 import { visit, linkVersions, renderTree, Node } from './tree'
 
 describe('visit function', () => {
