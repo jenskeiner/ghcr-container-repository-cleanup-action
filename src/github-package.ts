@@ -1,6 +1,5 @@
 import * as core from '@actions/core'
 import { Config } from './config'
-
 import axios, { AxiosInstance, isAxiosError, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { isValidChallenge, parseChallenge } from './utils'
@@ -123,7 +122,6 @@ export function scanRoots(
 
   for (const v of roots) {
     v.children = []
-    v.parent = null
     v.type = 'unknown'
   }
 
@@ -229,7 +227,7 @@ export class GithubPackageRepo {
       if (token) {
         return token
       } else {
-        throw new Error(`ghcr.io login failed: ${token.response.data}`)
+        throw new Error(`ghcr.io login failed: ${tokenResponse.data}`)
       }
     } else {
       throw new Error(`invalid www-authenticate challenge ${challenge}`)
@@ -257,6 +255,8 @@ export class GithubPackageRepo {
         } else {
           throw error
         }
+      } else {
+        throw error
       }
     }
   }
@@ -274,6 +274,26 @@ export class GithubPackageRepo {
     fn: (version: PackageVersionExt) => void
   ): Promise<void> {
     // Function to retrieve package versions.
+    const { fetch, fetch_params } = this.resolveFetchAndParams()
+
+    // Iterate over all package versions.
+    for await (const response of this.config.octokit.paginate.iterator(
+      fetch,
+      fetch_params
+    )) {
+      for (const packageVersion of response.data) {
+        const version0 = parsePackageVersion(JSON.stringify(packageVersion))
+        const manifest = await this.fetchManifest(version0.name)
+        const version = new PackageVersionExtModel(version0, manifest)
+        fn(version)
+      }
+    }
+  }
+
+  private resolveFetchAndParams(): {
+    fetch: any
+    fetch_params: any
+  } {
     let fetch
 
     // Parameters for the function call.
@@ -309,19 +329,7 @@ export class GithubPackageRepo {
         per_page: 100
       }
     }
-
-    // Iterate over all package versions.
-    for await (const response of this.config.octokit.paginate.iterator(
-      fetch,
-      fetch_params
-    )) {
-      for (const packageVersion of response.data) {
-        const version0 = parsePackageVersion(JSON.stringify(packageVersion))
-        const manifest = await this.fetchManifest(version0.name)
-        const version = new PackageVersionExtModel(version0, manifest)
-        fn(version)
-      }
-    }
+    return { fetch, fetch_params }
   }
 
   private addVersion(version: PackageVersionExt): void {

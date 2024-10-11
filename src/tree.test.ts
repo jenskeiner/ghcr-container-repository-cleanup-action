@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals'
 import { visit, linkVersions, renderTree, Node } from './tree'
 
 describe('visit function', () => {
@@ -5,31 +6,22 @@ describe('visit function', () => {
     id: number
     name: string
     children: TestNode[]
-    parent: TestNode | null
 
-    constructor(
-      id: number,
-      name: string,
-      children: TestNode[] = [],
-      parent: TestNode | null = null
-    ) {
+    constructor(id: number, name: string, children: TestNode[] = []) {
       this.id = id
       this.name = name
       this.children = children
-      this.parent = parent
     }
   }
 
   const createNode = (
     id: number,
     name: string,
-    children: TestNode[] = [],
-    parent: TestNode | null = null
+    children: TestNode[] = []
   ): TestNode => ({
     id,
     name,
-    children,
-    parent
+    children
   })
 
   it('should visit all nodes in a simple tree', () => {
@@ -199,14 +191,12 @@ describe('renderTree', () => {
 // Define a simple Node implementation for testing
 class TestNode implements Node<TestNode> {
   children: TestNode[] = []
-  parent: TestNode | null = null
   constructor(public value: string) {}
 }
 
 // Define another Node implementation with additional properties
 class ExtendedNode implements Node<ExtendedNode> {
   children: ExtendedNode[] = []
-  parent: ExtendedNode | null = null
   constructor(
     public id: number,
     public name: string
@@ -220,7 +210,6 @@ describe('linkVersions', () => {
 
     const result = linkVersions(parent, child)
 
-    expect(child.parent).toBe(parent)
     expect(parent.children).toContain(child)
     expect(parent.children.length).toBe(1)
     expect(result).toBe(child)
@@ -230,13 +219,11 @@ describe('linkVersions', () => {
     const parent = new TestNode('parent')
     const existingChild = new TestNode('existing')
     parent.children.push(existingChild)
-    existingChild.parent = parent
 
     const newChild = new TestNode('new')
 
     const result = linkVersions(parent, newChild)
 
-    expect(newChild.parent).toBe(parent)
     expect(parent.children).toContain(newChild)
     expect(parent.children.length).toBe(2)
     expect(parent.children).toContain(existingChild)
@@ -253,9 +240,6 @@ describe('linkVersions', () => {
     linkVersions(parent, child2)
     linkVersions(parent, child3)
 
-    expect(child1.parent).toBe(parent)
-    expect(child2.parent).toBe(parent)
-    expect(child3.parent).toBe(parent)
     expect(parent.children).toContain(child1)
     expect(parent.children).toContain(child2)
     expect(parent.children).toContain(child3)
@@ -289,18 +273,6 @@ describe('linkVersions', () => {
     )
   })
 
-  it('should throw an error when the child already has a different parent', () => {
-    const parent1 = new TestNode('parent1')
-    const parent2 = new TestNode('parent2')
-    const child = new TestNode('child')
-
-    linkVersions(parent1, child)
-
-    expect(() => linkVersions(parent2, child)).toThrow(
-      'Child already has a parent.'
-    )
-  })
-
   it('should return the child when trying to link a child to its existing parent', () => {
     const parent = new TestNode('parent')
     const child = new TestNode('child')
@@ -329,7 +301,6 @@ describe('linkVersions', () => {
 
     const result = linkVersions(parent, child)
 
-    expect(child.parent).toBe(parent)
     expect(parent.children).toContain(child)
     expect(parent.children.length).toBe(1)
     expect(result).toBe(child)

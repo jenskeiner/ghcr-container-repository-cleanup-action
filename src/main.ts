@@ -178,7 +178,7 @@ class CleanupAction {
             r,
             v => v.children,
             (v, prefix) => {
-              core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`)
+              core.info(`${v === r ? '- ' : '  '}${prefix} ${v}`)
             }
           )
         }
@@ -391,7 +391,7 @@ class CleanupAction {
             r,
             v => v.children,
             (v, prefix) => {
-              core.info(`${v.parent == null ? '- ' : '  '}${prefix} ${v}`)
+              core.info(`${v === r ? '- ' : '  '}${prefix} ${v}`)
             }
           )
         }

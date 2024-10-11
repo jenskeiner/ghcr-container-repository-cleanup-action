@@ -30,7 +30,7 @@
     "package": "npx ncc build src/index.ts -o dist --source-map --license licenses.txt",
     "ci-tester": "npx ncc build src/ci-tester.ts -o citester --source-map",
     "package:watch": "npm run package -- --watch",
-    "test": "npx jest --coverage",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "all": "npm run format:write && npm run lint && npm run test && npm run coverage && npm run package"
   },
   "license": "MIT",
