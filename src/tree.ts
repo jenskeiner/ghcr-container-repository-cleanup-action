@@ -1,6 +1,5 @@
 export interface Node<T extends Node<T>> {
   children: T[]
-  parent: T | null
 }
 
 type NodeRenderer<T extends Node<T>> = (node: T, prefix: string) => void
@@ -46,14 +45,6 @@ export function linkVersions<T extends Node<T>>(parent: T, child: T): T {
   if (parent === child) {
     throw new Error('Cannot link a node to itself.')
   }
-  if (child.parent) {
-    if (child.parent === parent) {
-      return child
-    } else {
-      throw new Error('Child already has a parent.')
-    }
-  }
-  child.parent = parent
   if (!parent.children.includes(child)) {
     parent.children.push(child)
   }

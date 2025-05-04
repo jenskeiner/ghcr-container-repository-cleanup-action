@@ -46772,15 +46772,6 @@ function linkVersions(parent, child) {
     if (parent === child) {
         throw new Error('Cannot link a node to itself.');
     }
-    if (child.parent) {
-        if (child.parent === parent) {
-            return child;
-        }
-        else {
-            throw new Error('Child already has a parent.');
-        }
-    }
-    child.parent = parent;
     if (!parent.children.includes(child)) {
         parent.children.push(child);
     }
@@ -46878,7 +46869,6 @@ function scanRoots(uniqueVersions, getVersion) {
     const roots = new Set(uniqueVersions);
     for (const v of roots) {
         v.children = [];
-        v.parent = null;
         v.type = 'unknown';
     }
     for (const v of discoverAndLinkManifestChildren(roots, getVersion)) {
@@ -46962,7 +46952,7 @@ class GithubPackageRepo {
                 return token;
             }
             else {
-                throw new Error(`ghcr.io login failed: ${token.response.data}`);
+                throw new Error(`ghcr.io login failed: ${tokenResponse.data}`);
             }
         }
         else {
@@ -46991,6 +46981,9 @@ class GithubPackageRepo {
                     throw error;
                 }
             }
+            else {
+                throw error;
+            }
         }
     }
     async init() {
@@ -47003,6 +46996,18 @@ class GithubPackageRepo {
      */
     async fetchVersions(fn) {
         // Function to retrieve package versions.
+        const { fetch, fetch_params } = this.resolveFetchAndParams();
+        // Iterate over all package versions.
+        for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
+            for (const packageVersion of response.data) {
+                const version0 = parsePackageVersion(JSON.stringify(packageVersion));
+                const manifest = await this.fetchManifest(version0.name);
+                const version = new PackageVersionExtModel(version0, manifest);
+                fn(version);
+            }
+        }
+    }
+    resolveFetchAndParams() {
         let fetch;
         // Parameters for the function call.
         let fetch_params;
@@ -47035,15 +47040,7 @@ class GithubPackageRepo {
                 per_page: 100
             };
         }
-        // Iterate over all package versions.
-        for await (const response of this.config.octokit.paginate.iterator(fetch, fetch_params)) {
-            for (const packageVersion of response.data) {
-                const version0 = parsePackageVersion(JSON.stringify(packageVersion));
-                const manifest = await this.fetchManifest(version0.name);
-                const version = new PackageVersionExtModel(version0, manifest);
-                fn(version);
-            }
-        }
+        return { fetch, fetch_params };
     }
     addVersion(version) {
         this.versions.set(version.name, version);
