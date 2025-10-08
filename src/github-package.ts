@@ -461,6 +461,11 @@ export class GithubPackageRepo {
       `/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`
     )
 
+    // Assume default mediaType if not present.
+    if (response?.data && !response?.data['mediaType']) {
+      response.data['mediaType'] = 'application/vnd.oci.image.index.v1+json'
+    }
+
     const manifest:
       | OCIImageIndexModel
       | OCIImageManifestModel

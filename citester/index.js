@@ -40896,7 +40896,7 @@ class RequestError extends Error {
     if (options.request.headers.authorization) {
       requestCopy.headers = Object.assign({}, options.request.headers, {
         authorization: options.request.headers.authorization.replace(
-          / .*$/,
+          /(?<! ) .*$/,
           " [REDACTED]"
         )
       });
@@ -47159,6 +47159,10 @@ class GithubPackageRepo {
     async fetchManifest(digest) {
         // Retrieve the manifest.
         const response = await this.axios.get(`/v2/${this.config.owner}/${this.config.package}/manifests/${digest}`);
+        // Assume default mediaType if not present.
+        if (response?.data && !response?.data['mediaType']) {
+            response.data['mediaType'] = 'application/vnd.oci.image.index.v1+json';
+        }
         const manifest = parseManifest(JSON.stringify(response?.data));
         return manifest;
     }
