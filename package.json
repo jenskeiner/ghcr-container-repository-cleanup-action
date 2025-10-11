@@ -76,7 +76,7 @@
     "@octokit/request-error": "^6.1.4",
     "@octokit/rest": "^21.0.2",
     "ajv": "^8.12.0",
-    "axios": "^1.7.7",
+    "axios": "^1.12.2",
     "axios-retry": "^4.5.0",
     "stdio": "^2.1.3"
   },
