@@ -14,17 +14,15 @@ on:
     types: [opened, reopened, synchronize]
     branches:
       - main
-  push:
-    branches:
-      - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  check-dist:
-    name: Check dist/
+  autofix:
+    name: Autofix dist/
     runs-on: ubuntu-latest
+    if: github.event.head_commit.author.name != 'autofix.ci[bot]'
 
     steps:
       - name: Checkout
