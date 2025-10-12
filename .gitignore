@@ -104,4 +104,4 @@ __tests__/runner/*
 
 # Claude Code
 CLAUDE.local.md
-.claude/*.local.*
+.claude
