@@ -14,15 +14,55 @@ on:
     types: [opened, reopened, synchronize]
     branches:
       - main
+  push:
+    branches:
+      - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  autofix:
+  autofix_pr:
     name: Autofix dist/
     runs-on: ubuntu-latest
-    if: github.event.head_commit.author.name != 'autofix.ci[bot]'
+    permissions:
+      contents: write
+    if:
+      github.event_name == 'pull_request_target' &&
+      github.event.head_commit.author.name != 'autofix.ci[bot]'
+
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        id: setup-node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Dependencies
+        id: install
+        run: npm ci && npm install
+
+      - name: Run prettier
+        id: format
+        run: npx prettier --write .
+
+      - name: Build
+        id: build
+        run: npm run bundle
+
+      - name: Push fixed files
+        id: push
+        uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27
+
+  autofix_main:
+    name: Autofix dist/
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
 
     steps:
       - name: Checkout
