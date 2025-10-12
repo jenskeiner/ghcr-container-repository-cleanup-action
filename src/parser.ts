@@ -1,20 +1,12 @@
 import * as core from '@actions/core'
-import AjvModule from 'ajv/dist/jtd.js'
-import { manifestSchema, packageVersionSchema } from './schemas'
+import { manifestSchema, packageVersionSchema, PackageVersion } from './schemas'
 import {
-  Manifest,
   OCIImageIndexModel,
   OCIImageManifestModel,
   DockerImageManifestModel,
   DockerManifestListModel,
-  PackageVersionModel,
-  PackageVersion
+  PackageVersionModel
 } from './models'
-
-const Ajv = (AjvModule as any).default || AjvModule
-const ajv = new Ajv()
-
-const parseManifest0 = ajv.compileParser(manifestSchema)
 
 export function parseManifest(
   jsonString: string
@@ -23,23 +15,37 @@ export function parseManifest(
   | OCIImageManifestModel
   | DockerImageManifestModel
   | DockerManifestListModel {
+  // Input validation
   if (typeof jsonString !== 'string') {
     throw new Error('Invalid JSON data')
   }
 
-  const data = parseManifest0(jsonString) as Manifest
-
-  if (data === undefined) {
-    core.info(`${parseManifest0.position}`)
-    core.info(`${parseManifest0.message}`)
-    core.info(`${jsonString}`)
+  // Parse JSON
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonString)
+  } catch (error) {
+    core.info(
+      `JSON parse error: ${error instanceof Error ? error.message : 'Unknown error'}`
+    )
+    core.info(`Input: ${jsonString}`)
     throw new Error('Invalid JSON data')
   }
 
-  if (!data.mediaType) {
-    throw new Error('Unknown media type')
+  // Validate with Zod
+  const result = manifestSchema.safeParse(parsed)
+
+  if (!result.success) {
+    // Enhanced error logging with Zod's detailed errors
+    core.info(`Validation errors: ${JSON.stringify(result.error.format())}`)
+    core.info(`Input: ${jsonString}`)
+    throw new Error('Invalid JSON data')
   }
 
+  const data = result.data
+
+  // Discriminated union handling
+  // mediaType is guaranteed by Zod validation to be one of the enum values
   switch (data.mediaType) {
     case 'application/vnd.oci.image.manifest.v1+json':
       return new OCIImageManifestModel(data)
@@ -49,23 +55,36 @@ export function parseManifest(
       return new DockerManifestListModel(data)
     case 'application/vnd.docker.distribution.manifest.v2+json':
       return new DockerImageManifestModel(data)
-    default:
-      throw new Error('Unknown media type')
   }
 }
 
-const parsePackageVersion0 = ajv.compileParser(packageVersionSchema)
-
 export function parsePackageVersion(jsonString: string): PackageVersion {
+  // Input validation
   if (typeof jsonString !== 'string') {
     throw new Error('Invalid JSON data')
   }
 
-  const data = parsePackageVersion0(jsonString) as PackageVersion
-
-  if (data === undefined) {
+  // Parse JSON
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(jsonString)
+  } catch (error) {
+    core.info(
+      `JSON parse error: ${error instanceof Error ? error.message : 'Unknown error'}`
+    )
+    core.info(`Input: ${jsonString}`)
     throw new Error('Invalid JSON data')
   }
 
-  return new PackageVersionModel(data)
+  // Validate with Zod
+  const result = packageVersionSchema.safeParse(parsed)
+
+  if (!result.success) {
+    // Enhanced error logging with Zod's detailed errors
+    core.info(`Validation errors: ${JSON.stringify(result.error.format())}`)
+    core.info(`Input: ${jsonString}`)
+    throw new Error('Invalid JSON data')
+  }
+
+  return new PackageVersionModel(result.data)
 }

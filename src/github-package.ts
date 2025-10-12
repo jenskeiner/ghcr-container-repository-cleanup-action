@@ -5,12 +5,12 @@ import axios, { AxiosInstance, isAxiosError, AxiosResponse } from 'axios'
 import axiosRetry from 'axios-retry'
 import { isValidChallenge, parseChallenge } from './utils'
 import { parseManifest, parsePackageVersion } from './parser'
+import { Manifest } from './schemas'
 import {
   OCIImageIndexModel,
   OCIImageManifestModel,
   DockerImageManifestModel,
   DockerManifestListModel,
-  Manifest,
   PackageVersionType,
   PackageVersionExt,
   PackageVersionExtModel,

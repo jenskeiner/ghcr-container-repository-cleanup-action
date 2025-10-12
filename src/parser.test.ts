@@ -185,3 +185,131 @@ describe('parsePackageVersion', () => {
     expect(() => parsePackageVersion(null as any)).toThrow('Invalid JSON data')
   })
 })
+
+describe('parseManifest - Zod specific', () => {
+  test('should handle additional properties correctly', () => {
+    const input = JSON.stringify({
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      layers: [],
+      customField: 'should be preserved'
+    })
+    const result = parseManifest(input)
+    expect((result as any).customField).toBe('should be preserved')
+  })
+
+  test('should validate mediaType enum strictly', () => {
+    const input = JSON.stringify({
+      mediaType: 'application/vnd.custom.type+json',
+      layers: []
+    })
+    expect(() => parseManifest(input)).toThrow('Invalid JSON data')
+  })
+
+  test('should preserve additional properties in nested objects', () => {
+    const input = JSON.stringify({
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      manifests: [
+        {
+          mediaType: 'application/vnd.oci.image.manifest.v1+json',
+          digest: 'sha256:1234567890abcdef',
+          customNestedField: 'preserved'
+        }
+      ],
+      customTopLevel: 'also preserved'
+    })
+    const result = parseManifest(input)
+    expect((result as any).customTopLevel).toBe('also preserved')
+    const manifests = (result as any).manifests
+    expect(manifests[0].customNestedField).toBe('preserved')
+  })
+})
+
+describe('parsePackageVersion - Zod specific', () => {
+  test('should validate id is integer', () => {
+    const input = JSON.stringify({
+      id: 1.5, // float instead of int
+      name: 'package-1.0.0',
+      url: 'https://example.com',
+      package_html_url: 'https://example.com',
+      created_at: '2023-05-01T12:00:00Z',
+      updated_at: '2023-05-01T12:00:00Z',
+      html_url: 'https://example.com',
+      metadata: {
+        package_type: 'container',
+        container: { tags: [] }
+      }
+    })
+    expect(() => parsePackageVersion(input)).toThrow('Invalid JSON data')
+  })
+
+  test('should validate nested container.tags is array', () => {
+    const input = JSON.stringify({
+      id: 1,
+      name: 'package-1.0.0',
+      url: 'https://example.com',
+      package_html_url: 'https://example.com',
+      created_at: '2023-05-01T12:00:00Z',
+      updated_at: '2023-05-01T12:00:00Z',
+      html_url: 'https://example.com',
+      metadata: {
+        package_type: 'container',
+        container: { tags: 'not-an-array' }
+      }
+    })
+    expect(() => parsePackageVersion(input)).toThrow('Invalid JSON data')
+  })
+
+  test('should handle additional properties correctly', () => {
+    const input = JSON.stringify({
+      id: 1,
+      name: 'package-1.0.0',
+      url: 'https://example.com',
+      package_html_url: 'https://example.com',
+      created_at: '2023-05-01T12:00:00Z',
+      updated_at: '2023-05-01T12:00:00Z',
+      html_url: 'https://example.com',
+      metadata: {
+        package_type: 'container',
+        container: { tags: [], customField: 'preserved' }
+      },
+      customTopLevel: 'also preserved'
+    })
+    const result = parsePackageVersion(input)
+    expect((result as any).customTopLevel).toBe('also preserved')
+    expect((result.metadata.container as any).customField).toBe('preserved')
+  })
+
+  test('should reject non-integer id values', () => {
+    const input = JSON.stringify({
+      id: '1', // string instead of number
+      name: 'package-1.0.0',
+      url: 'https://example.com',
+      package_html_url: 'https://example.com',
+      created_at: '2023-05-01T12:00:00Z',
+      updated_at: '2023-05-01T12:00:00Z',
+      html_url: 'https://example.com',
+      metadata: {
+        package_type: 'container',
+        container: { tags: [] }
+      }
+    })
+    expect(() => parsePackageVersion(input)).toThrow('Invalid JSON data')
+  })
+
+  test('should reject non-array tags', () => {
+    const input = JSON.stringify({
+      id: 1,
+      name: 'package-1.0.0',
+      url: 'https://example.com',
+      package_html_url: 'https://example.com',
+      created_at: '2023-05-01T12:00:00Z',
+      updated_at: '2023-05-01T12:00:00Z',
+      html_url: 'https://example.com',
+      metadata: {
+        package_type: 'container',
+        container: { tags: null }
+      }
+    })
+    expect(() => parsePackageVersion(input)).toThrow('Invalid JSON data')
+  })
+})
