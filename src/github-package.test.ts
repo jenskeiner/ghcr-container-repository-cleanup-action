@@ -1,9 +1,5 @@
-import {
-  ManifestHolder,
-  ManifestReference,
-  MediaType,
-  PackageMetadataHolder
-} from './models'
+import { ManifestReference } from './schemas'
+import { ManifestHolder, MediaType, PackageMetadataHolder } from './models'
 import {
   getManifestChildren,
   discoverAndLinkManifestChildren,

@@ -33,3 +33,10 @@ repos:
         language: system
         types_or: [ts]
         require_serial: true
+      - id: npm-install
+        name: Update package-lock.json when package.json changes
+        entry: npm install
+        language: system
+        files: ^package\.json$
+        pass_filenames: false
+        require_serial: true

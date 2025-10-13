@@ -1,4 +1,9 @@
 import { Node } from './tree'
+import type {
+  Manifest,
+  PackageVersionMetadata,
+  PackageVersion
+} from './schemas'
 
 export type MediaType =
   | 'application/vnd.oci.image.manifest.v1+json'
@@ -6,19 +11,8 @@ export type MediaType =
   | 'application/vnd.docker.distribution.manifest.list.v2+json'
   | 'application/vnd.docker.distribution.manifest.v2+json'
 
-export interface ManifestReference {
-  digest: string
-  mediaType: string
-}
-
-export interface Manifest {
-  mediaType: MediaType
-  manifests?: ManifestReference[]
-  layers?: ManifestReference[]
-  subject?: ManifestReference
-}
-
 export class OCIImageManifestModel implements Manifest {
+  [x: string]: unknown
   mediaType = 'application/vnd.oci.image.manifest.v1+json' as const
 
   constructor(data: Manifest) {
@@ -27,6 +21,7 @@ export class OCIImageManifestModel implements Manifest {
 }
 
 export class OCIImageIndexModel implements Manifest {
+  [x: string]: unknown
   mediaType = 'application/vnd.oci.image.index.v1+json' as const
 
   constructor(data: Manifest) {
@@ -35,6 +30,7 @@ export class OCIImageIndexModel implements Manifest {
 }
 
 export class DockerManifestListModel implements Manifest {
+  [x: string]: unknown
   mediaType =
     'application/vnd.docker.distribution.manifest.list.v2+json' as const
 
@@ -44,6 +40,7 @@ export class DockerManifestListModel implements Manifest {
 }
 
 export class DockerImageManifestModel implements Manifest {
+  [x: string]: unknown
   mediaType = 'application/vnd.docker.distribution.manifest.v2+json' as const
 
   constructor(data: Manifest) {
@@ -51,14 +48,8 @@ export class DockerImageManifestModel implements Manifest {
   }
 }
 
-export interface PackageVersionMetadata {
-  package_type: string
-  container: {
-    tags: string[]
-  }
-}
-
 export class PackageVersionMetadataModel implements PackageVersionMetadata {
+  [x: string]: unknown
   package_type: string = 'container' as const
   container: {
     tags: string[]
@@ -73,16 +64,6 @@ export class PackageVersionMetadataModel implements PackageVersionMetadata {
 
 export interface PackageMetadataHolder {
   metadata: PackageVersionMetadata
-}
-
-export interface PackageVersion extends PackageMetadataHolder {
-  id: number
-  name: string
-  url: string
-  package_html_url: string
-  created_at: string
-  updated_at: string
-  html_url: string
 }
 
 export type PackageVersionType =
@@ -108,6 +89,7 @@ export interface PackageVersionExt
 }
 
 export class PackageVersionModel implements PackageVersion {
+  [x: string]: unknown
   id = 0
   name = ''
   url = ''
