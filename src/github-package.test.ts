@@ -133,7 +133,7 @@ interface TestNode extends ManifestHolder, Node<TestNode> {
   id: string
   manifest: {
     mediaType: MediaType
-    manifests?: { mediaType: string; digest: string }[]
+    manifests?: Array<{ mediaType: string; digest: string }>
   }
   children: TestNode[]
   parent: TestNode | null

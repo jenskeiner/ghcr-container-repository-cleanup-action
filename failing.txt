@@ -1,0 +1,40 @@
+ghcr-cleanup-action@1.0.1 /Users/jens/Development/ghcr-cleanup-action
+├─┬ @octokit/plugin-request-log@6.0.0
+│ └─┬ @octokit/core@6.1.6
+│   ├─┬ @octokit/graphql@8.2.2
+│   │ └── @octokit/types@14.1.0 deduped
+│   ├─┬ @octokit/request-error@6.1.8
+│   │ └── @octokit/types@14.1.0 deduped
+│   ├─┬ @octokit/request@9.2.4
+│   │ ├─┬ @octokit/endpoint@10.1.4
+│   │ │ └── @octokit/types@14.1.0 deduped
+│   │ ├─┬ @octokit/request-error@6.1.8
+│   │ │ └── @octokit/types@14.1.0 deduped
+│   │ └── @octokit/types@14.1.0 deduped
+│   └── @octokit/types@14.1.0 deduped
+├─┬ @octokit/plugin-retry@7.2.1
+│ ├── @octokit/core@6.1.6 deduped
+│ ├─┬ @octokit/request-error@6.1.8
+│ │ └── @octokit/types@14.1.0 deduped
+│ └── @octokit/types@14.1.0
+├─┬ @octokit/plugin-throttling@10.0.0
+│ ├── @octokit/core@6.1.6 deduped
+│ └── @octokit/types@14.1.0 deduped
+├─┬ @octokit/request-error@7.0.1
+│ └── @octokit/types@15.0.0
+└─┬ @octokit/rest@22.0.0
+  ├─┬ @octokit/core@7.0.5
+  │ ├─┬ @octokit/graphql@9.0.2
+  │ │ └── @octokit/types@15.0.0 deduped
+  │ ├─┬ @octokit/request@10.0.5
+  │ │ ├─┬ @octokit/endpoint@11.0.1
+  │ │ │ └── @octokit/types@15.0.0 deduped
+  │ │ └── @octokit/types@15.0.0 deduped
+  │ └── @octokit/types@15.0.0
+  ├─┬ @octokit/plugin-paginate-rest@13.2.0
+  │ ├── @octokit/core@6.1.6 deduped
+  │ └── @octokit/types@15.0.0
+  └─┬ @octokit/plugin-rest-endpoint-methods@16.1.0
+    ├── @octokit/core@6.1.6 deduped
+    └── @octokit/types@15.0.0
+
