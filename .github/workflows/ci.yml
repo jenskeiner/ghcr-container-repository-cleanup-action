@@ -64,7 +64,6 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     needs: general-tests
-
     strategy:
       max-parallel: 1
       matrix:
