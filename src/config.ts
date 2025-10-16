@@ -1,12 +1,17 @@
 import * as core from '@actions/core'
-import { Octokit } from '@octokit/rest'
+import { Octokit } from '@octokit/core'
+import { restEndpointMethods } from '@octokit/plugin-rest-endpoint-methods'
 import { throttling } from '@octokit/plugin-throttling'
 import { retry } from '@octokit/plugin-retry'
 import { requestLog } from '@octokit/plugin-request-log'
 import type { EndpointDefaults } from '@octokit/types'
 
-// @ts-expect-error: esm errror
-const MyOctokit = Octokit.plugin(requestLog, throttling, retry)
+const MyOctokit = Octokit.plugin(
+  restEndpointMethods,
+  requestLog,
+  throttling,
+  retry
+)
 
 /**
  * Represents the log levels for the action.
