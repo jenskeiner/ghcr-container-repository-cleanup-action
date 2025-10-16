@@ -55,3 +55,5 @@ jobs:
           VALIDATE_GITHUB_ACTIONS: false
           VALIDATE_TYPESCRIPT_STANDARD: false
           MARKDOWN_CONFIG_FILE: .markdown-lint.yml
+          VALIDATE_BIOME_FORMAT: false
+          VALIDATE_BIOME_LINT: false
