@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
-  packages: write
-  contents: read
-  attestations: write
+  id-token: write # zizmor: ignore[excessive-permissions]
+  packages: write # zizmor: ignore[excessive-permissions]
+  contents: read # zizmor: ignore[excessive-permissions]
+  attestations: write # zizmor: ignore[excessive-permissions]
 
 concurrency:
   group: ci-tests
@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         id: setup-node
@@ -55,7 +57,7 @@ jobs:
         run: npm run test
 
       - name: Upload results to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   integration-tests:
@@ -158,6 +160,8 @@ jobs:
       # Setup for test execution
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -217,17 +221,17 @@ jobs:
 
       - name: ' > Debug: Print Env Variables'
         run: |
-          echo "include-tags: ${{ env.INCLUDE_TAGS }}"
-          echo "exclude-tags: ${{ env.EXCLUDE_TAGS }}"
-          echo "keep-n-tagged: ${{ env.KEEP_N_TAGGED }}"
-          echo "keep-n-untagged: ${{ env.KEEP_N_UNTAGGED }}"
-          echo "dry-run: ${{ env.DRY_RUN }}"
+          echo "include-tags: ${INCLUDE_TAGS}"
+          echo "exclude-tags: ${EXCLUDE_TAGS}"
+          echo "keep-n-tagged: ${KEEP_N_TAGGED}"
+          echo "keep-n-untagged: ${KEEP_N_UNTAGGED}"
+          echo "dry-run: ${DRY_RUN}"
 
       - name: ' > Priming Test Environment'
         run: |
           node citester/index.js --token ${{ secrets.GITHUB_TOKEN }} \
             --directory tests/${{ matrix.tests.folder }} \
-            --mode prime --delay ${{ env.DELAY }}
+            --mode prime --delay ${DELAY}
 
       - name: ' > Running Workflow'
         uses: ./
@@ -258,16 +262,18 @@ jobs:
       # Setup for test execution
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
-        with:
+        with: # zizmor: ignore[cache-poisoning]  This workflow is not used to actually publish usable artifacts.
           node-version-file: .node-version
           cache: npm
 
       # referrer/attestation tests
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -283,7 +289,7 @@ jobs:
           tests/14_attestation_tagged --mode prime
       - name: Build and push image
         id: push1
-        uses: docker/build-push-action@v6.18.0
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
         with:
           context: tests/14_attestation_tagged
           file: tests/14_attestation_tagged/Dockerfile
