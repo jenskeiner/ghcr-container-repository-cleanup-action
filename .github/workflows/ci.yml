@@ -12,12 +12,6 @@ on:
     - cron: '31 7 * * 3'
   workflow_dispatch:
 
-permissions:
-  id-token: write # zizmor: ignore[excessive-permissions]
-  packages: write # zizmor: ignore[excessive-permissions]
-  contents: read # zizmor: ignore[excessive-permissions]
-  attestations: write # zizmor: ignore[excessive-permissions]
-
 concurrency:
   group: ci-tests
   cancel-in-progress: false
@@ -26,6 +20,7 @@ jobs:
   general-tests:
     name: General Tests
     runs-on: ubuntu-latest
+    permissions: {}
 
     steps:
       - name: Checkout
@@ -64,6 +59,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     needs: general-tests
+    permissions:
+      packages: write
     strategy:
       max-parallel: 1
       matrix:
@@ -251,6 +248,10 @@ jobs:
   attestation-tests:
     name: Attestation Tests
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      id-token: write
+      attestations: write # zizmor: ignore[excessive-permissions]
     concurrency:
       group: attestation-tests-group
     env:
