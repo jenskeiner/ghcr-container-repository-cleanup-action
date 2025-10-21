@@ -55174,9 +55174,45 @@ class CleanupAction {
             }
             lib_core.endGroup();
             lib_core.startGroup('Delete versions.');
+            const deletionStartTime = Date.now();
+            let deletedCount = 0;
+            const maxConcurrency = 3;
+            const inFlight = new Set();
             for (const v of versionsDelete) {
                 lib_core.info(`Deleting version ${v}.`);
-                await this.repo.deleteVersion(v.id);
+                const versionStartTime = Date.now();
+                const promiseWrapper = { promise: null };
+                promiseWrapper.promise = (async () => {
+                    try {
+                        await this.repo.deleteVersion(v.id);
+                        const versionDuration = Date.now() - versionStartTime;
+                        deletedCount++;
+                        if (versionDuration > 100) {
+                            lib_core.debug(`Single deletion took ${versionDuration}ms for ${v}`);
+                        }
+                    }
+                    catch (error) {
+                        lib_core.error(`Failed to delete version ${v}: ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                    finally {
+                        inFlight.delete(promiseWrapper.promise);
+                    }
+                })();
+                inFlight.add(promiseWrapper.promise);
+                // Wait if we've hit max concurrency
+                if (inFlight.size >= maxConcurrency) {
+                    await Promise.race(inFlight);
+                }
+            }
+            // Wait for all remaining deletions to complete
+            if (inFlight.size > 0) {
+                await Promise.all(Array.from(inFlight));
+            }
+            const totalDeletionTime = Date.now() - deletionStartTime;
+            const avgDeletionTime = deletedCount > 0 ? Math.round(totalDeletionTime / deletedCount) : 0;
+            lib_core.info(`Deleted ${deletedCount} versions in ${totalDeletionTime}ms (avg: ${avgDeletionTime}ms per version)`);
+            if (totalDeletionTime > 1000) {
+                lib_core.warning(`Slow deletion phase: ${totalDeletionTime}ms for ${deletedCount} versions`);
             }
             lib_core.endGroup();
         }
