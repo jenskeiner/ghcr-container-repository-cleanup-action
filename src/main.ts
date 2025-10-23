@@ -408,10 +408,63 @@ class CleanupAction {
       core.endGroup()
 
       core.startGroup('Delete versions.')
+      const deletionStartTime = Date.now()
+      let deletedCount = 0
+      const maxConcurrency = 3
+
+      const inFlight = new Set<Promise<void>>()
+
       for (const v of versionsDelete) {
         core.info(`Deleting version ${v}.`)
-        await this.repo.deleteVersion(v.id)
+        const versionStartTime = Date.now()
+
+        const promiseWrapper = { promise: null as Promise<void> | null }
+
+        promiseWrapper.promise = (async () => {
+          try {
+            await this.repo.deleteVersion(v.id)
+            const versionDuration = Date.now() - versionStartTime
+            deletedCount++
+
+            if (versionDuration > 100) {
+              core.debug(`Single deletion took ${versionDuration}ms for ${v}`)
+            }
+          } catch (error) {
+            core.error(
+              `Failed to delete version ${v}: ${error instanceof Error ? error.message : String(error)}`
+            )
+          } finally {
+            inFlight.delete(promiseWrapper.promise!)
+          }
+        })()
+
+        inFlight.add(promiseWrapper.promise)
+
+        // Wait if we've hit max concurrency
+        if (inFlight.size >= maxConcurrency) {
+          await Promise.race(inFlight)
+        }
       }
+
+      // Wait for all remaining deletions to complete
+      if (inFlight.size > 0) {
+        await Promise.all(Array.from(inFlight))
+      }
+
+      const totalDeletionTime = Date.now() - deletionStartTime
+      const avgDeletionTime =
+        deletedCount > 0 ? Math.round(totalDeletionTime / deletedCount) : 0
+
+      core.info(
+        `Deleted ${deletedCount} versions in ${totalDeletionTime}ms (avg: ${avgDeletionTime}ms per version)`
+      )
+
+      if (totalDeletionTime > 1000) {
+        core.warning(
+          `Slow deletion phase: ${totalDeletionTime}ms for ${deletedCount} versions`
+        )
+      }
+
       core.endGroup()
     } catch (error) {
       // Fail the workflow run if an error occurs
